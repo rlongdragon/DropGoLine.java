@@ -135,6 +135,10 @@ Enter Server IP (default 127.0.0.1):
 1
 ```
 
+If the signaling server is not on the default port, either set
+`SIGNALING_PORT=18080` before starting the client or type
+`127.0.0.1:18080` at the Server IP prompt.
+
 Terminal 3, start Alice's chat client:
 
 ```sh

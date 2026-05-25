@@ -40,41 +40,45 @@ public class P2pChatCli {
 
     public static void main(String[] args) throws Exception {
         P2pChatCli cli = new P2pChatCli();
-        if (args.length == 0) {
-            cli.runInteractive();
-            return;
-        }
+        try {
+            if (args.length == 0) {
+                cli.runInteractive();
+                return;
+            }
 
-        switch (args[0]) {
-            case "create" -> {
-                if (args.length < 4) {
-                    usage();
-                    return;
+            switch (args[0]) {
+                case "create" -> {
+                    if (args.length < 4) {
+                        usage();
+                        return;
+                    }
+                    cli.createRoom(args[1], args[2], Path.of(args[3]), args.length >= 5 ? args[4] : defaultSignalUrl());
                 }
-                cli.createRoom(args[1], args[2], Path.of(args[3]), args.length >= 5 ? args[4] : defaultSignalUrl());
-            }
-            case "join" -> {
-                if (args.length < 4) {
-                    usage();
-                    return;
+                case "join" -> {
+                    if (args.length < 4) {
+                        usage();
+                        return;
+                    }
+                    cli.joinRoom(args[1], args[2], Path.of(args[3]), args.length >= 5 ? args[4] : defaultSignalUrl());
                 }
-                cli.joinRoom(args[1], args[2], Path.of(args[3]), args.length >= 5 ? args[4] : defaultSignalUrl());
-            }
-            case "listen" -> {
-                if (args.length < 3) {
-                    usage();
-                    return;
+                case "listen" -> {
+                    if (args.length < 3) {
+                        usage();
+                        return;
+                    }
+                    cli.listen(args[1], Path.of(args[2]), args.length >= 4 ? args[3] : defaultSignalUrl());
                 }
-                cli.listen(args[1], Path.of(args[2]), args.length >= 4 ? args[3] : defaultSignalUrl());
-            }
-            case "connect" -> {
-                if (args.length < 4) {
-                    usage();
-                    return;
+                case "connect" -> {
+                    if (args.length < 4) {
+                        usage();
+                        return;
+                    }
+                    cli.connect(args[1], args[2], Path.of(args[3]), args.length >= 5 ? args[4] : defaultSignalUrl());
                 }
-                cli.connect(args[1], args[2], Path.of(args[3]), args.length >= 5 ? args[4] : defaultSignalUrl());
+                default -> usage();
             }
-            default -> usage();
+        } catch (Exception e) {
+            System.out.println("[error] " + userMessage(e));
         }
     }
 
@@ -269,18 +273,32 @@ public class P2pChatCli {
                     chat.close();
                     return;
                 }
-                if (line.startsWith("/file ")) {
-                    chat.offerFile(Path.of(line.substring("/file ".length()).trim()));
-                    continue;
+                try {
+                    if (line.equals("/file") || line.startsWith("/file ")) {
+                        String path = argument(line, "/file");
+                        if (path.isBlank()) {
+                            System.out.println("[file] usage: /file <path>");
+                            continue;
+                        }
+                        chat.offerFile(Path.of(path));
+                        continue;
+                    }
+                    if (line.equals("/save") || line.startsWith("/save ")) {
+                        String id = argument(line, "/save");
+                        if (id.isBlank()) {
+                            System.out.println("[file] usage: /save <offer-id>");
+                            continue;
+                        }
+                        chat.requestFile(id);
+                        continue;
+                    }
+                    if (line.isBlank()) {
+                        continue;
+                    }
+                    chat.sendText(line);
+                } catch (Exception e) {
+                    System.out.println("[error] " + userMessage(e));
                 }
-                if (line.startsWith("/save ")) {
-                    chat.requestFile(line.substring("/save ".length()).trim());
-                    continue;
-                }
-                if (line.isBlank()) {
-                    continue;
-                }
-                chat.sendText(line);
             }
         }
     }
@@ -316,18 +334,32 @@ public class P2pChatCli {
                         close();
                         return;
                     }
-                    if (line.startsWith("/file ")) {
-                        offerFile(Path.of(line.substring("/file ".length()).trim()));
-                        continue;
+                    try {
+                        if (line.equals("/file") || line.startsWith("/file ")) {
+                            String path = argument(line, "/file");
+                            if (path.isBlank()) {
+                                System.out.println("[file] usage: /file <path>");
+                                continue;
+                            }
+                            offerFile(Path.of(path));
+                            continue;
+                        }
+                        if (line.equals("/save") || line.startsWith("/save ")) {
+                            String id = argument(line, "/save");
+                            if (id.isBlank()) {
+                                System.out.println("[file] usage: /save <offer-id>");
+                                continue;
+                            }
+                            requestFile(id);
+                            continue;
+                        }
+                        if (line.isBlank()) {
+                            continue;
+                        }
+                        sendText(line);
+                    } catch (Exception e) {
+                        System.out.println("[error] " + userMessage(e));
                     }
-                    if (line.startsWith("/save ")) {
-                        requestFile(line.substring("/save ".length()).trim());
-                        continue;
-                    }
-                    if (line.isBlank()) {
-                        continue;
-                    }
-                    sendText(line);
                 }
             } finally {
                 close();
@@ -563,8 +595,20 @@ public class P2pChatCli {
         if (serverIp.startsWith("ws://") || serverIp.startsWith("wss://")) {
             return serverIp.endsWith("/signal") ? serverIp : serverIp + "/signal";
         }
+        if (serverIp.contains(":")) {
+            return "ws://" + serverIp + "/signal";
+        }
         String port = env("SIGNALING_PORT", "8080");
         return "ws://" + serverIp + ":" + port + "/signal";
+    }
+
+    private static String argument(String line, String command) {
+        return line.length() <= command.length() ? "" : line.substring(command.length()).trim();
+    }
+
+    private static String userMessage(Exception e) {
+        String message = e.getMessage();
+        return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
     }
 
     private static void usage() {

@@ -1,12 +1,15 @@
 package p2p.peer;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.net.http.WebSocketHandshakeException;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -22,13 +25,19 @@ public class PeerSignalClient implements AutoCloseable {
     private final String peerId;
     private final WebSocket webSocket;
 
-    public PeerSignalClient(String signalingUrl, String peerId) {
+    public PeerSignalClient(String signalingUrl, String peerId) throws IOException {
         this.peerId = peerId;
         URI uri = URI.create(signalingUrl + (signalingUrl.contains("?") ? "&" : "?") + "peerId=" + peerId);
-        this.webSocket = HttpClient.newHttpClient()
-                .newWebSocketBuilder()
-                .buildAsync(uri, new Listener())
-                .join();
+        try {
+            this.webSocket = HttpClient.newHttpClient()
+                    .newWebSocketBuilder()
+                    .buildAsync(uri, new Listener())
+                    .join();
+        } catch (CompletionException e) {
+            throw new IOException(connectionError(uri, e), e);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("invalid signaling URL: " + uri, e);
+        }
     }
 
     public void send(String type, String to, Object payload) throws Exception {
@@ -79,6 +88,19 @@ public class PeerSignalClient implements AutoCloseable {
             return message.payload().toString();
         }
         return "server rejected signal";
+    }
+
+    private String connectionError(URI uri, CompletionException error) {
+        Throwable cause = error.getCause();
+        if (cause instanceof WebSocketHandshakeException handshake) {
+            return "cannot connect to signaling WebSocket " + uri
+                    + " (HTTP " + handshake.getResponse().statusCode()
+                    + "). Check server IP/port and make sure the Java signaling server is running.";
+        }
+        if (cause != null && cause.getMessage() != null && !cause.getMessage().isBlank()) {
+            return "cannot connect to signaling WebSocket " + uri + ": " + cause.getMessage();
+        }
+        return "cannot connect to signaling WebSocket " + uri;
     }
 
     @Override
