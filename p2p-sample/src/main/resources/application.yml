@@ -1,0 +1,11 @@
+server:
+  port: 8080
+
+p2p:
+  ice:
+    stun-server: stun.l.google.com
+    stun-port: 19302
+    turn-server: localhost
+    turn-port: 3478
+    turn-username: p2p
+    turn-password: changeme
