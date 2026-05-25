@@ -1,8 +1,10 @@
 package p2p.signaling;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Optional;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
@@ -47,6 +49,10 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
             joinRoom(session, signal);
             return;
         }
+        if ("room-relay".equals(signal.type())) {
+            relayRoomMessage(session, signal);
+            return;
+        }
 
         if (signal.to() == null || signal.to().isBlank()) {
             sendError(session, "Missing target peer");
@@ -77,14 +83,13 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void createRoom(WebSocketSession session, SignalMessage signal) throws Exception {
-        String roomId = roomId(signal);
+        String requestedRoomId = roomId(signal);
         String peerId = peerRegistry.peerId(session).orElse(signal.from());
-        if (roomId.isBlank()) {
-            sendError(session, "Missing roomId");
-            return;
-        }
-        if (!roomRegistry.create(roomId, peerId)) {
-            sendError(session, "Room already exists: " + roomId);
+        String roomId;
+        try {
+            roomId = roomRegistry.create(requestedRoomId, peerId);
+        } catch (IllegalArgumentException e) {
+            sendError(session, e.getMessage());
             return;
         }
 
@@ -97,28 +102,55 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
     private void joinRoom(WebSocketSession session, SignalMessage signal) throws Exception {
         String roomId = roomId(signal);
         String joinerPeerId = peerRegistry.peerId(session).orElse(signal.from());
-        Optional<String> hostPeerId = roomRegistry.host(roomId);
-        if (roomId.isBlank() || hostPeerId.isEmpty()) {
-            sendError(session, "Room not found: " + roomId);
-            return;
-        }
-
-        Optional<WebSocketSession> hostSession = peerRegistry.find(hostPeerId.get());
-        if (hostSession.isEmpty()) {
-            roomRegistry.removePeer(hostPeerId.get());
-            sendError(session, "Room host is offline: " + roomId);
+        List<String> existingPeers;
+        try {
+            existingPeers = roomRegistry.join(roomId, joinerPeerId);
+        } catch (IllegalArgumentException e) {
+            sendError(session, e.getMessage());
             return;
         }
 
         ObjectNode joinedPayload = objectMapper.createObjectNode();
         joinedPayload.put("roomId", roomId);
-        joinedPayload.put("peerId", hostPeerId.get());
+        joinedPayload.putPOJO("peers", existingPeers);
         sendSignal(session, "room-joined", joinedPayload);
 
-        ObjectNode peerJoinedPayload = objectMapper.createObjectNode();
-        peerJoinedPayload.put("roomId", roomId);
-        peerJoinedPayload.put("peerId", joinerPeerId);
-        sendSignal(hostSession.get(), "room-peer-joined", peerJoinedPayload);
+        for (String existingPeer : existingPeers) {
+            Optional<WebSocketSession> target = peerRegistry.find(existingPeer);
+            if (target.isEmpty()) {
+                roomRegistry.removePeer(existingPeer);
+                continue;
+            }
+            ObjectNode peerJoinedPayload = objectMapper.createObjectNode();
+            peerJoinedPayload.put("roomId", roomId);
+            peerJoinedPayload.put("peerId", joinerPeerId);
+            sendSignal(target.get(), "room-peer-joined", peerJoinedPayload);
+        }
+    }
+
+    private void relayRoomMessage(WebSocketSession session, SignalMessage signal) throws Exception {
+        String from = peerRegistry.peerId(session).orElse(signal.from());
+        String roomId = roomRegistry.roomOf(from);
+        if (roomId == null) {
+            sendError(session, "Peer is not in a room");
+            return;
+        }
+
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("roomId", roomId);
+        JsonNode message = signal.payload() != null && signal.payload().has("message")
+                ? signal.payload().get("message")
+                : objectMapper.nullNode();
+        payload.set("message", message);
+
+        for (String peerId : roomRegistry.peersInSameRoom(from)) {
+            Optional<WebSocketSession> target = peerRegistry.find(peerId);
+            if (target.isPresent()) {
+                sendSignal(target.get(), "room-relay", payload, from);
+            } else {
+                roomRegistry.removePeer(peerId);
+            }
+        }
     }
 
     private String roomId(SignalMessage signal) {
@@ -129,7 +161,11 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void sendSignal(WebSocketSession session, String type, ObjectNode payload) throws Exception {
-        SignalMessage signal = new SignalMessage(type, "signal", peerRegistry.peerId(session).orElse(null), payload);
+        sendSignal(session, type, payload, "signal");
+    }
+
+    private void sendSignal(WebSocketSession session, String type, ObjectNode payload, String from) throws Exception {
+        SignalMessage signal = new SignalMessage(type, from, peerRegistry.peerId(session).orElse(null), payload);
         peerRegistry.send(session, objectMapper.writeValueAsString(signal));
     }
 

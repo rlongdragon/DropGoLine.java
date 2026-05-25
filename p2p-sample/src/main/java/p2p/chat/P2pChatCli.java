@@ -3,11 +3,19 @@ package p2p.chat;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import p2p.ice.IceDescription;
@@ -23,6 +31,7 @@ import p2p.signaling.SignalMessage;
 
 public class P2pChatCli {
     private static final Duration SIGNAL_TIMEOUT = Duration.ofMinutes(5);
+    private static final Duration SIGNAL_POLL = Duration.ofMillis(500);
     private static final Duration ICE_TIMEOUT = Duration.ofSeconds(45);
 
     private final IceNegotiationService ice = new IceNegotiationService();
@@ -72,14 +81,13 @@ public class P2pChatCli {
     private void createRoom(String peerId, String roomId, Path downloadDirectory, String signalingUrl) throws Exception {
         try (PeerSignalClient signal = new PeerSignalClient(signalingUrl, peerId)) {
             signal.sendToServer("create-room", Map.of("roomId", roomId));
-            signal.waitFor("room-created", SIGNAL_TIMEOUT);
-            System.out.println("[room] created " + roomId + " as " + peerId);
-            System.out.println("[room] waiting for another peer to join");
+            SignalMessage created = signal.waitFor("room-created", SIGNAL_TIMEOUT);
+            String actualRoomId = created.payload().path("roomId").asText(roomId);
+            System.out.println("[room] created " + actualRoomId + " as " + peerId);
 
-            SignalMessage joined = signal.waitFor("room-peer-joined", SIGNAL_TIMEOUT);
-            String targetPeerId = joined.payload().path("peerId").asText();
-            System.out.println("[room] " + targetPeerId + " joined " + roomId);
-            acceptChat(signal, peerId, downloadDirectory);
+            RoomChatApp app = new RoomChatApp(signal, peerId, downloadDirectory);
+            app.start();
+            app.runConsole();
         }
     }
 
@@ -87,9 +95,15 @@ public class P2pChatCli {
         try (PeerSignalClient signal = new PeerSignalClient(signalingUrl, peerId)) {
             signal.sendToServer("join-room", Map.of("roomId", roomId));
             SignalMessage joined = signal.waitFor("room-joined", SIGNAL_TIMEOUT);
-            String hostPeerId = joined.payload().path("peerId").asText();
-            System.out.println("[room] joined " + roomId + ", host is " + hostPeerId);
-            connectChat(signal, peerId, hostPeerId, downloadDirectory);
+            String actualRoomId = joined.payload().path("roomId").asText(roomId);
+            System.out.println("[room] joined " + actualRoomId + " as " + peerId);
+
+            RoomChatApp app = new RoomChatApp(signal, peerId, downloadDirectory);
+            app.start();
+            for (String existingPeer : peersFrom(joined.payload().path("peers"))) {
+                app.connectToPeer(existingPeer);
+            }
+            app.runConsole();
         }
     }
 
@@ -138,7 +152,7 @@ public class P2pChatCli {
             System.out.println("[chat] waiting for QUIC chat stream");
             accepted.await();
             System.out.println("[chat] connected. Type text, /file <path>, /save <id>, or /quit.");
-            runConsole(chatRef.get());
+            runDirectConsole(chatRef.get());
         } finally {
             ChatSession chat = chatRef.get();
             if (chat != null) {
@@ -167,13 +181,13 @@ public class P2pChatCli {
             chat.sendHello();
             chat.startReader();
             System.out.println("[chat] connected. Type text, /file <path>, /save <id>, or /quit.");
-            runConsole(chat);
+            runDirectConsole(chat);
         } finally {
             ice.free(session);
         }
     }
 
-    private void runConsole(ChatSession chat) throws Exception {
+    private void runDirectConsole(ChatSession chat) throws Exception {
         try (Scanner scanner = new Scanner(System.in)) {
             while (scanner.hasNextLine()) {
                 String line = scanner.nextLine();
@@ -195,6 +209,256 @@ public class P2pChatCli {
                 chat.sendText(line);
             }
         }
+    }
+
+    private final class RoomChatApp {
+        private final PeerSignalClient signal;
+        private final String peerId;
+        private final Path downloadDirectory;
+        private final ExecutorService executor = Executors.newCachedThreadPool();
+        private final Map<String, ChatSession> sessionsByPeer = new ConcurrentHashMap<>();
+        private final Map<String, CompletableFuture<IceDescription>> pendingAnswers = new ConcurrentHashMap<>();
+        private final Set<String> connectingPeers = ConcurrentHashMap.newKeySet();
+        private volatile boolean running = true;
+
+        private RoomChatApp(PeerSignalClient signal, String peerId, Path downloadDirectory) {
+            this.signal = signal;
+            this.peerId = peerId;
+            this.downloadDirectory = downloadDirectory;
+        }
+
+        private void start() {
+            Thread signalThread = new Thread(this::signalLoop, "room-chat-signal-" + peerId);
+            signalThread.setDaemon(true);
+            signalThread.start();
+            System.out.println("[chat] room app ready. Type text, /file <path>, /save <id>, or /quit.");
+        }
+
+        private void runConsole() throws Exception {
+            try (Scanner scanner = new Scanner(System.in)) {
+                while (running && scanner.hasNextLine()) {
+                    String line = scanner.nextLine();
+                    if (line.equals("/quit")) {
+                        close();
+                        return;
+                    }
+                    if (line.startsWith("/file ")) {
+                        offerFile(Path.of(line.substring("/file ".length()).trim()));
+                        continue;
+                    }
+                    if (line.startsWith("/save ")) {
+                        requestFile(line.substring("/save ".length()).trim());
+                        continue;
+                    }
+                    if (line.isBlank()) {
+                        continue;
+                    }
+                    sendText(line);
+                }
+            } finally {
+                close();
+            }
+        }
+
+        private void signalLoop() {
+            while (running) {
+                try {
+                    SignalMessage message = signal.nextSignal(SIGNAL_POLL);
+                    if (message == null) {
+                        continue;
+                    }
+                    switch (message.type()) {
+                        case "room-peer-joined" -> {
+                            String joinedPeer = message.payload().path("peerId").asText();
+                            if (!joinedPeer.isBlank()) {
+                                System.out.println("[room] " + joinedPeer + " joined; waiting for direct offer");
+                            }
+                        }
+                        case "chat-offer" -> acceptPeer(message);
+                        case "chat-answer" -> completeAnswer(message);
+                        case "room-relay" -> receiveRelay(message);
+                        case "error" -> System.out.println("[signal] " + message.payload());
+                        default -> {
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (Exception e) {
+                    if (running) {
+                        System.out.println("[signal] " + e.getMessage());
+                    }
+                }
+            }
+        }
+
+        private void connectToPeer(String remotePeerId) {
+            if (remotePeerId == null || remotePeerId.isBlank() || remotePeerId.equals(peerId)) {
+                return;
+            }
+            if (sessionsByPeer.containsKey(remotePeerId) || !connectingPeers.add(remotePeerId)) {
+                return;
+            }
+            executor.submit(() -> {
+                IceSession session = null;
+                try {
+                    session = ice.createSession(peerId, true, iceConfig());
+                    CompletableFuture<IceDescription> answerFuture = new CompletableFuture<>();
+                    pendingAnswers.put(remotePeerId, answerFuture);
+                    signal.send("chat-offer", remotePeerId, session.localDescription());
+                    IceDescription answer = answerFuture.get(SIGNAL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+                    ice.setRemoteDescription(session, answer);
+
+                    System.out.println("[chat] establishing ICE path to " + remotePeerId);
+                    IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
+                    try (QuicChannel channel = quic.connect(
+                            iceConnection.socket(),
+                            iceConnection.remoteAddress(),
+                            iceConnection.remotePort());
+                         QuicChannel.TransferStream stream = channel.openStream()) {
+                        ChatSession chat = new ChatSession(peerId, stream.input(), stream.output(), downloadDirectory);
+                        chat.sendHello();
+                        chat.startReader();
+                        sessionsByPeer.put(remotePeerId, chat);
+                        System.out.println("[System] Direct Link established with " + remotePeerId);
+                        chat.waitUntilClosed();
+                    }
+                } catch (Exception e) {
+                    if (running) {
+                        System.out.println("[chat] direct link to " + remotePeerId + " failed: " + e.getMessage());
+                    }
+                } finally {
+                    connectingPeers.remove(remotePeerId);
+                    pendingAnswers.remove(remotePeerId);
+                    sessionsByPeer.remove(remotePeerId);
+                    if (session != null) {
+                        ice.free(session);
+                    }
+                }
+            });
+        }
+
+        private void acceptPeer(SignalMessage offerSignal) {
+            String remotePeerId = offerSignal.from();
+            if (remotePeerId == null || remotePeerId.isBlank() || remotePeerId.equals(peerId)) {
+                return;
+            }
+            executor.submit(() -> {
+                IceSession session = null;
+                AtomicReference<ChatSession> chatRef = new AtomicReference<>();
+                try {
+                    IceDescription offer = objectMapper.treeToValue(offerSignal.payload(), IceDescription.class);
+                    session = ice.createSession(peerId, false, iceConfig());
+                    ice.setRemoteDescription(session, offer);
+                    signal.send("chat-answer", remotePeerId, session.localDescription());
+
+                    System.out.println("[chat] establishing ICE path to " + remotePeerId);
+                    IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
+                    CountDownLatch accepted = new CountDownLatch(1);
+                    try (InputStream cert = QuicCertificateFiles.certificate();
+                         InputStream key = QuicCertificateFiles.privateKey()) {
+                        quic.accept(iceConnection.socket(), cert, key, (input, output) -> {
+                            ChatSession chat = new ChatSession(peerId, input, output, downloadDirectory);
+                            chat.expectHello();
+                            chat.startReader();
+                            chatRef.set(chat);
+                            sessionsByPeer.put(remotePeerId, chat);
+                            System.out.println("[System] Direct Link established with " + remotePeerId);
+                            accepted.countDown();
+                            try {
+                                chat.waitUntilClosed();
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        });
+                        accepted.await();
+                        ChatSession chat = chatRef.get();
+                        if (chat != null) {
+                            chat.waitUntilClosed();
+                        }
+                    }
+                } catch (Exception e) {
+                    if (running) {
+                        System.out.println("[chat] direct link from " + remotePeerId + " failed: " + e.getMessage());
+                    }
+                } finally {
+                    ChatSession chat = chatRef.get();
+                    if (chat != null) {
+                        chat.close();
+                    }
+                    sessionsByPeer.remove(remotePeerId);
+                    if (session != null) {
+                        ice.free(session);
+                    }
+                }
+            });
+        }
+
+        private void completeAnswer(SignalMessage message) throws Exception {
+            CompletableFuture<IceDescription> answer = pendingAnswers.get(message.from());
+            if (answer != null) {
+                answer.complete(objectMapper.treeToValue(message.payload(), IceDescription.class));
+            }
+        }
+
+        private void receiveRelay(SignalMessage message) {
+            String sender = message.from();
+            if (sender != null && sessionsByPeer.containsKey(sender)) {
+                return;
+            }
+            String content = message.payload().path("message").asText("");
+            if (!content.isBlank()) {
+                System.out.println("[" + sender + "](Relay): " + content);
+            }
+        }
+
+        private void sendText(String text) throws Exception {
+            for (ChatSession session : sessionsByPeer.values()) {
+                session.sendText(text);
+            }
+            signal.sendToServer("room-relay", Map.of("message", text));
+        }
+
+        private void offerFile(Path path) throws Exception {
+            if (sessionsByPeer.isEmpty()) {
+                System.out.println("[file] no direct peers connected yet");
+                return;
+            }
+            for (ChatSession session : sessionsByPeer.values()) {
+                session.offerFile(path);
+            }
+        }
+
+        private void requestFile(String id) throws Exception {
+            if (sessionsByPeer.isEmpty()) {
+                System.out.println("[file] no direct peers connected yet");
+                return;
+            }
+            for (ChatSession session : sessionsByPeer.values()) {
+                session.requestFile(id);
+            }
+        }
+
+        private void close() {
+            running = false;
+            for (ChatSession session : sessionsByPeer.values()) {
+                session.close();
+            }
+            executor.shutdownNow();
+        }
+    }
+
+    private static Set<String> peersFrom(JsonNode peersNode) {
+        Set<String> peers = new HashSet<>();
+        if (peersNode == null || !peersNode.isArray()) {
+            return peers;
+        }
+        peersNode.forEach(peer -> {
+            if (peer.isTextual() && !peer.asText().isBlank()) {
+                peers.add(peer.asText());
+            }
+        });
+        return peers;
     }
 
     private static IceServerConfig iceConfig() {
@@ -223,7 +487,7 @@ public class P2pChatCli {
 
     private static void usage() {
         System.out.println("Usage:");
-        System.out.println("  java ... p2p.chat.P2pChatCli create <peerId> <roomId> <downloadDir> [ws://host:8080/signal]");
+        System.out.println("  java ... p2p.chat.P2pChatCli create <peerId> <roomId|auto> <downloadDir> [ws://host:8080/signal]");
         System.out.println("  java ... p2p.chat.P2pChatCli join <peerId> <roomId> <downloadDir> [ws://host:8080/signal]");
         System.out.println("  java ... p2p.chat.P2pChatCli listen <peerId> <downloadDir> [ws://host:8080/signal]");
         System.out.println("  java ... p2p.chat.P2pChatCli connect <peerId> <targetPeerId> <downloadDir> [ws://host:8080/signal]");

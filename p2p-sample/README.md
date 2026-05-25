@@ -100,11 +100,17 @@ STUN_SERVER= mvn exec:java \
   -Dexec.args="send alice bob ./some-file.txt ws://127.0.0.1:18080/signal"
 ```
 
-## Chat With Optional File Save
+## Room Chat App With Optional File Save
 
-The chat CLI uses the same signaling, ICE, and QUIC stack. Normal input is sent
-as text. `/file <path>` only advertises a file offer. The peer must type
-`/save <id>` before the file is sent.
+The room chat sample keeps the same signaling, ICE, and QUIC connection stack.
+It follows the original C# chat flow: one peer creates a room, other peers join
+by room code, the signaling server introduces room peers, and clients build
+direct QUIC links between peers. Text is also sent through server relay as a
+fallback; relay messages from peers that already have a direct link are ignored.
+
+Normal input is sent as text. `/file <path>` only advertises a file offer over
+direct QUIC chat sessions. The peer must type `/save <id>` before the file is
+sent.
 
 Terminal 1, signaling server:
 

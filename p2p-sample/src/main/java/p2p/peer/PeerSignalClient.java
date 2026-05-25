@@ -70,6 +70,10 @@ public class PeerSignalClient implements AutoCloseable {
         throw new IllegalStateException("timed out waiting for signal type " + type);
     }
 
+    public SignalMessage nextSignal(Duration timeout) throws InterruptedException {
+        return incoming.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
     private String errorText(SignalMessage message) {
         if (message.payload() != null) {
             return message.payload().toString();
