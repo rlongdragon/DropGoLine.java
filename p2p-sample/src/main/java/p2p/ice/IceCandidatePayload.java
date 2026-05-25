@@ -2,7 +2,7 @@ package p2p.ice;
 
 public record IceCandidatePayload(
         String foundation,
-        String component,
+        int componentId,
         String transport,
         long priority,
         String address,

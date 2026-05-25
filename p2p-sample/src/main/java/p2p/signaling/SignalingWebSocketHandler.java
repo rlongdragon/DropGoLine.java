@@ -51,7 +51,12 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        peerRegistry.send(target.get(), objectMapper.writeValueAsString(forwarded));
+        try {
+            peerRegistry.send(target.get(), objectMapper.writeValueAsString(forwarded));
+        } catch (Exception e) {
+            peerRegistry.unregister(target.get());
+            sendError(session, "Target peer is offline: " + signal.to());
+        }
     }
 
     @Override

@@ -15,7 +15,15 @@ public class PeerRegistry {
     private final Map<String, String> peerIdsBySessionId = new ConcurrentHashMap<>();
 
     public void register(String peerId, WebSocketSession session) {
-        sessionsByPeerId.put(peerId, session);
+        WebSocketSession previous = sessionsByPeerId.put(peerId, session);
+        if (previous != null && !previous.getId().equals(session.getId())) {
+            peerIdsBySessionId.remove(previous.getId());
+            try {
+                previous.close();
+            } catch (IOException ignored) {
+                // The old session is being replaced, so close failures are not actionable.
+            }
+        }
         peerIdsBySessionId.put(session.getId(), peerId);
     }
 
@@ -36,6 +44,10 @@ public class PeerRegistry {
     }
 
     public void send(WebSocketSession session, String json) throws IOException {
+        if (!session.isOpen()) {
+            unregister(session);
+            throw new IOException("peer session is closed");
+        }
         synchronized (session) {
             session.sendMessage(new TextMessage(json));
         }

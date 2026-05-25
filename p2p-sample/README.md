@@ -23,13 +23,63 @@ mvn package
 ## Run Signaling Server
 
 ```sh
-java -jar target/java-p2p-0.1.0-SNAPSHOT.jar
+java -jar target/java-p2p.jar --server.port=18080
 ```
 
 The signaling server exposes:
 
 - `GET /health`
 - `WS /signal?peerId=<peer-id>`
+
+Check that it is running before starting peers:
+
+```sh
+curl http://127.0.0.1:18080/health
+```
+
+## Transfer a File
+
+Use three terminals.
+
+Terminal 1, signaling server:
+
+```sh
+java -jar target/java-p2p.jar --server.port=18080
+```
+
+Terminal 2, receiver:
+
+```sh
+mvn exec:java \
+  -Dexec.mainClass=p2p.peer.P2pPeerCli \
+  -Dexec.args="listen bob ./received ws://127.0.0.1:18080/signal"
+```
+
+Terminal 3, sender:
+
+```sh
+mvn exec:java \
+  -Dexec.mainClass=p2p.peer.P2pPeerCli \
+  -Dexec.args="send alice bob ./some-file.txt ws://127.0.0.1:18080/signal"
+```
+
+The peer CLI uses UDP ports `50000-51000` for ICE candidates by default.
+Override this range when needed. When running two peers on the same host, give
+the second process a different preferred port inside the same range:
+
+```sh
+P2P_UDP_MIN_PORT=52000 P2P_UDP_MAX_PORT=53000 P2P_UDP_PREFERRED_PORT=52010 mvn exec:java \
+  -Dexec.mainClass=p2p.peer.P2pPeerCli \
+  -Dexec.args="listen bob ./received ws://127.0.0.1:18080/signal"
+```
+
+For a local-only test, disable the default public STUN server:
+
+```sh
+STUN_SERVER= mvn exec:java \
+  -Dexec.mainClass=p2p.peer.P2pPeerCli \
+  -Dexec.args="send alice bob ./some-file.txt ws://127.0.0.1:18080/signal"
+```
 
 Example signaling message:
 
@@ -53,9 +103,8 @@ message to the target peer.
 The translated TCP chat prototype still exists under `src/main/java/chat`.
 The new Spring Boot application entry point is `p2p.P2pApplication`.
 
-## Next Implementation Steps
+## Remaining Work
 
-1. Replace `IceNegotiationService` scaffold with concrete ice4j candidate gathering and connectivity checks.
-2. Replace `QuicTransportService` scaffold with concrete kwik client/server connection creation over the ICE-selected UDP path.
-3. Connect `FileTransferProtocol` to QUIC streams and persist `TransferState` for reconnect/resume.
-4. Configure coturn on the VPS and copy the credentials into `application.yml` or environment variables.
+1. Configure coturn on the VPS and set `TURN_SERVER`, `TURN_USERNAME`, and `TURN_PASSWORD`.
+2. Persist transfer state if you want resume after process restart.
+3. Replace the bundled sample QUIC certificate before using this outside a demo environment.

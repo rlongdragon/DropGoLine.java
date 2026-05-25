@@ -53,6 +53,7 @@
     </dependencies>
 
     <build>
+        <finalName>java-p2p</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
@@ -60,6 +61,11 @@
                 <configuration>
                     <mainClass>p2p.P2pApplication</mainClass>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
             </plugin>
         </plugins>
     </build>
