@@ -39,12 +39,12 @@ public class P2pChatCli {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public static void main(String[] args) throws Exception {
-        if (args.length < 1) {
-            usage();
+        P2pChatCli cli = new P2pChatCli();
+        if (args.length == 0) {
+            cli.runInteractive();
             return;
         }
 
-        P2pChatCli cli = new P2pChatCli();
         switch (args[0]) {
             case "create" -> {
                 if (args.length < 4) {
@@ -78,6 +78,49 @@ public class P2pChatCli {
         }
     }
 
+    private void runInteractive() throws Exception {
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("=== P2P Chat Client (Smart Hybrid) ===");
+
+        System.out.print("Enter your name: ");
+        String peerId = scanner.nextLine().trim();
+        if (peerId.isBlank()) {
+            System.out.println("[error] name is required");
+            return;
+        }
+
+        System.out.print("Enter Server IP (default 127.0.0.1): ");
+        String serverIp = scanner.nextLine().trim();
+        if (serverIp.isBlank()) {
+            serverIp = "127.0.0.1";
+        }
+
+        String signalingUrl = signalUrlFromServerIp(serverIp);
+        Path downloadDirectory = Path.of(env("CHAT_DOWNLOAD_DIR", "./downloads"));
+        System.out.println("1. Create Room");
+        System.out.println("2. Join Room");
+        String choice = scanner.nextLine().trim();
+
+        if ("1".equals(choice)) {
+            System.out.println("Creating room... waiting for code.");
+            createRoom(peerId, "auto", downloadDirectory, signalingUrl, scanner);
+            return;
+        }
+
+        if ("2".equals(choice)) {
+            System.out.print("Enter Code: ");
+            String roomId = scanner.nextLine().trim();
+            if (roomId.isBlank()) {
+                System.out.println("[error] room code is required");
+                return;
+            }
+            joinRoom(peerId, roomId, downloadDirectory, signalingUrl, scanner);
+            return;
+        }
+
+        System.out.println("[error] unknown choice: " + choice);
+    }
+
     private void createRoom(String peerId, String roomId, Path downloadDirectory, String signalingUrl) throws Exception {
         try (PeerSignalClient signal = new PeerSignalClient(signalingUrl, peerId)) {
             signal.sendToServer("create-room", Map.of("roomId", roomId));
@@ -87,7 +130,21 @@ public class P2pChatCli {
 
             RoomChatApp app = new RoomChatApp(signal, peerId, downloadDirectory);
             app.start();
-            app.runConsole();
+            app.runConsole(new Scanner(System.in));
+        }
+    }
+
+    private void createRoom(String peerId, String roomId, Path downloadDirectory, String signalingUrl,
+                            Scanner scanner) throws Exception {
+        try (PeerSignalClient signal = new PeerSignalClient(signalingUrl, peerId)) {
+            signal.sendToServer("create-room", Map.of("roomId", roomId));
+            SignalMessage created = signal.waitFor("room-created", SIGNAL_TIMEOUT);
+            String actualRoomId = created.payload().path("roomId").asText(roomId);
+            System.out.println("[room] created " + actualRoomId + " as " + peerId);
+
+            RoomChatApp app = new RoomChatApp(signal, peerId, downloadDirectory);
+            app.start();
+            app.runConsole(scanner);
         }
     }
 
@@ -103,7 +160,24 @@ public class P2pChatCli {
             for (String existingPeer : peersFrom(joined.payload().path("peers"))) {
                 app.connectToPeer(existingPeer);
             }
-            app.runConsole();
+            app.runConsole(new Scanner(System.in));
+        }
+    }
+
+    private void joinRoom(String peerId, String roomId, Path downloadDirectory, String signalingUrl,
+                          Scanner scanner) throws Exception {
+        try (PeerSignalClient signal = new PeerSignalClient(signalingUrl, peerId)) {
+            signal.sendToServer("join-room", Map.of("roomId", roomId));
+            SignalMessage joined = signal.waitFor("room-joined", SIGNAL_TIMEOUT);
+            String actualRoomId = joined.payload().path("roomId").asText(roomId);
+            System.out.println("[room] joined " + actualRoomId + " as " + peerId);
+
+            RoomChatApp app = new RoomChatApp(signal, peerId, downloadDirectory);
+            app.start();
+            for (String existingPeer : peersFrom(joined.payload().path("peers"))) {
+                app.connectToPeer(existingPeer);
+            }
+            app.runConsole(scanner);
         }
     }
 
@@ -234,8 +308,8 @@ public class P2pChatCli {
             System.out.println("[chat] room app ready. Type text, /file <path>, /save <id>, or /quit.");
         }
 
-        private void runConsole() throws Exception {
-            try (Scanner scanner = new Scanner(System.in)) {
+        private void runConsole(Scanner scanner) throws Exception {
+            try {
                 while (running && scanner.hasNextLine()) {
                     String line = scanner.nextLine();
                     if (line.equals("/quit")) {
@@ -483,6 +557,14 @@ public class P2pChatCli {
 
     private static String defaultSignalUrl() {
         return env("SIGNALING_URL", "ws://127.0.0.1:8080/signal");
+    }
+
+    private static String signalUrlFromServerIp(String serverIp) {
+        if (serverIp.startsWith("ws://") || serverIp.startsWith("wss://")) {
+            return serverIp.endsWith("/signal") ? serverIp : serverIp + "/signal";
+        }
+        String port = env("SIGNALING_PORT", "8080");
+        return "ws://" + serverIp + ":" + port + "/signal";
     }
 
     private static void usage() {

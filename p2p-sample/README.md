@@ -118,25 +118,46 @@ Terminal 1, signaling server:
 java -jar target/java-p2p.jar --server.port=18080
 ```
 
-Terminal 2, Bob creates a room and saves downloads under `./bob-downloads`:
+Terminal 2, start Bob's chat client:
 
 ```sh
-STUN_SERVER= P2P_UDP_PREFERRED_PORT=50000 mvn exec:java \
-  -Dexec.mainClass=p2p.chat.P2pChatCli \
-  -Dexec.args="create bob room-123 ./bob-downloads ws://127.0.0.1:18080/signal"
+SIGNALING_PORT=18080 STUN_SERVER= P2P_UDP_PREFERRED_PORT=50000 mvn exec:java \
+  -Dexec.mainClass=p2p.chat.P2pChatCli
 ```
 
-Terminal 3, Alice joins that room and saves downloads under `./alice-downloads`:
+Then answer the prompts:
+
+```text
+Enter your name: bob
+Enter Server IP (default 127.0.0.1):
+1. Create Room
+2. Join Room
+1
+```
+
+Terminal 3, start Alice's chat client:
 
 ```sh
-STUN_SERVER= P2P_UDP_PREFERRED_PORT=50010 mvn exec:java \
-  -Dexec.mainClass=p2p.chat.P2pChatCli \
-  -Dexec.args="join alice room-123 ./alice-downloads ws://127.0.0.1:18080/signal"
+SIGNALING_PORT=18080 STUN_SERVER= P2P_UDP_PREFERRED_PORT=50010 mvn exec:java \
+  -Dexec.mainClass=p2p.chat.P2pChatCli
 ```
 
-Direct peer commands are still available for debugging:
-`listen <peerId> <downloadDir> [signalUrl]` and
-`connect <peerId> <targetPeerId> <downloadDir> [signalUrl]`.
+Then join with Bob's generated room code:
+
+```text
+Enter your name: alice
+Enter Server IP (default 127.0.0.1):
+1. Create Room
+2. Join Room
+2
+Enter Code: JCMD
+```
+
+Downloads go to `./downloads` by default. Override with
+`CHAT_DOWNLOAD_DIR=./alice-downloads`.
+
+Parameterized commands are still available for debugging:
+`create`, `join`, `listen`, and `connect`.
 
 Chat commands:
 
