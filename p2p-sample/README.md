@@ -81,6 +81,48 @@ STUN_SERVER= mvn exec:java \
   -Dexec.args="send alice bob ./some-file.txt ws://127.0.0.1:18080/signal"
 ```
 
+## Chat With Optional File Save
+
+The chat CLI uses the same signaling, ICE, and QUIC stack. Normal input is sent
+as text. `/file <path>` only advertises a file offer. The peer must type
+`/save <id>` before the file is sent.
+
+Terminal 1, signaling server:
+
+```sh
+java -jar target/java-p2p.jar --server.port=18080
+```
+
+Terminal 2, Bob waits for chat and saves downloads under `./bob-downloads`:
+
+```sh
+STUN_SERVER= P2P_UDP_PREFERRED_PORT=50000 mvn exec:java \
+  -Dexec.mainClass=p2p.chat.P2pChatCli \
+  -Dexec.args="listen bob ./bob-downloads ws://127.0.0.1:18080/signal"
+```
+
+Terminal 3, Alice connects to Bob and saves downloads under `./alice-downloads`:
+
+```sh
+STUN_SERVER= P2P_UDP_PREFERRED_PORT=50010 mvn exec:java \
+  -Dexec.mainClass=p2p.chat.P2pChatCli \
+  -Dexec.args="connect alice bob ./alice-downloads ws://127.0.0.1:18080/signal"
+```
+
+Chat commands:
+
+```text
+hello
+/file ./some-file.txt
+/save 1a2b3c4d
+/quit
+```
+
+File security rule: the receiver never sends a filesystem path to the sender.
+`/save` sends only an opaque offer id. The sender serves a file only if that id
+exists in its local history from an earlier `/file <path>` command in the same
+process.
+
 Example signaling message:
 
 ```json
