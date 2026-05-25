@@ -130,15 +130,14 @@ Then answer the prompts:
 
 ```text
 Enter your name: bob
-Enter Server IP (default 127.0.0.1):
+Enter Server IP (default 127.0.0.1:18080):
 1. Create Room
 2. Join Room
 1
 ```
 
-If the signaling server is not on the default port, either set
-`SIGNALING_PORT=18080` before starting the client or type
-`127.0.0.1:18080` at the Server IP prompt.
+If the signaling server is on another port, either set `SIGNALING_PORT` before
+starting the client or type `127.0.0.1:8080` at the Server IP prompt.
 
 Terminal 3, start Alice's chat client:
 
@@ -151,7 +150,7 @@ Then join with Bob's generated room code:
 
 ```text
 Enter your name: alice
-Enter Server IP (default 127.0.0.1):
+Enter Server IP (default 127.0.0.1:18080):
 1. Create Room
 2. Join Room
 2

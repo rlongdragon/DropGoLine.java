@@ -93,10 +93,10 @@ public class P2pChatCli {
             return;
         }
 
-        System.out.print("Enter Server IP (default 127.0.0.1): ");
+        System.out.print("Enter Server IP (default 127.0.0.1:18080): ");
         String serverIp = scanner.nextLine().trim();
         if (serverIp.isBlank()) {
-            serverIp = "127.0.0.1";
+            serverIp = "127.0.0.1:18080";
         }
 
         String signalingUrl = signalUrlFromServerIp(serverIp);
@@ -654,7 +654,7 @@ public class P2pChatCli {
         if (serverIp.contains(":")) {
             return "ws://" + serverIp + "/signal";
         }
-        String port = env("SIGNALING_PORT", "8080");
+        String port = env("SIGNALING_PORT", "18080");
         return "ws://" + serverIp + ":" + port + "/signal";
     }
 
