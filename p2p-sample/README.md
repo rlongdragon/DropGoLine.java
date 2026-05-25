@@ -108,9 +108,10 @@ by room code, the signaling server introduces room peers, and clients build
 direct QUIC links between peers. Text is also sent through server relay as a
 fallback; relay messages from peers that already have a direct link are ignored.
 
-Normal input is sent as text. `/file <path>` only advertises a file offer over
-direct QUIC chat sessions. The peer must type `/save <id>` before the file is
-sent.
+Normal input is broadcast as text. `/msg <username> <message>` sends a private
+message to one connected peer. `/file <path>` advertises a file offer to every
+direct peer, and `/file <path> <username>` advertises it only to one peer. The
+peer must type `/save <id>` before the file is sent.
 
 Terminal 1, signaling server:
 
@@ -167,7 +168,9 @@ Chat commands:
 
 ```text
 hello
+/msg alice hello privately
 /file ./some-file.txt
+/file ./some-file.txt alice
 /save 1a2b3c4d
 /quit
 ```

@@ -15,6 +15,7 @@ import java.util.concurrent.CountDownLatch;
 
 public class ChatSession implements AutoCloseable {
     private final String localPeerId;
+    private final String remotePeerId;
     private final Path downloadDirectory;
     private final DataInputStream input;
     private final DataOutputStream output;
@@ -24,7 +25,13 @@ public class ChatSession implements AutoCloseable {
     private volatile boolean running = true;
 
     public ChatSession(String localPeerId, InputStream input, OutputStream output, Path downloadDirectory) {
+        this(localPeerId, "peer", input, output, downloadDirectory);
+    }
+
+    public ChatSession(String localPeerId, String remotePeerId, InputStream input, OutputStream output,
+                       Path downloadDirectory) {
         this.localPeerId = localPeerId;
+        this.remotePeerId = remotePeerId == null || remotePeerId.isBlank() ? "peer" : remotePeerId;
         this.input = new DataInputStream(input);
         this.output = new DataOutputStream(output);
         this.downloadDirectory = downloadDirectory;
@@ -72,7 +79,7 @@ public class ChatSession implements AutoCloseable {
             output.writeLong(Files.size(path));
             output.flush();
         }
-        System.out.println("[file] offered " + path + " as " + id);
+        ChatConsole.file("offered " + path + " as " + id);
     }
 
     public void requestFile(String id) throws IOException {
@@ -83,9 +90,9 @@ public class ChatSession implements AutoCloseable {
         }
         RemoteOffer offer = remoteOffers.get(id);
         if (offer == null) {
-            System.out.println("[file] requested " + id);
+            ChatConsole.file("requested " + id);
         } else {
-            System.out.println("[file] requested " + id + " (" + offer.fileName() + ")");
+            ChatConsole.file("requested " + id + " (" + offer.fileName() + ")");
         }
     }
 
@@ -104,19 +111,19 @@ public class ChatSession implements AutoCloseable {
             while (running) {
                 int type = input.readInt();
                 switch (type) {
-                    case ChatProtocol.TYPE_TEXT -> System.out.println("[peer] " + input.readUTF());
+                    case ChatProtocol.TYPE_TEXT -> ChatConsole.incoming(remotePeerId, input.readUTF());
                     case ChatProtocol.TYPE_FILE_OFFER -> receiveFileOffer();
                     case ChatProtocol.TYPE_FILE_REQUEST -> sendRequestedFile(input.readUTF());
                     case ChatProtocol.TYPE_FILE_START -> receiveFile();
-                    case ChatProtocol.TYPE_NOTICE -> System.out.println("[notice] " + input.readUTF());
+                    case ChatProtocol.TYPE_NOTICE -> ChatConsole.notice(input.readUTF());
                     default -> throw new IOException("unknown chat frame type: " + type);
                 }
             }
         } catch (EOFException ignored) {
-            System.out.println("[chat] peer disconnected");
+            ChatConsole.system(remotePeerId + " disconnected");
         } catch (Exception e) {
             if (running) {
-                System.out.println("[chat] " + e.getMessage());
+                ChatConsole.error(e.getMessage());
             }
         } finally {
             close();
@@ -128,8 +135,8 @@ public class ChatSession implements AutoCloseable {
         String fileName = sanitizeFileName(input.readUTF());
         long size = input.readLong();
         remoteOffers.put(id, new RemoteOffer(fileName, size));
-        System.out.println("[file] offer " + id + " " + fileName + " (" + size + " bytes)");
-        System.out.println("[file] type /save " + id + " to download");
+        ChatConsole.file(remotePeerId + " offered " + id + " " + fileName + " (" + size + " bytes)");
+        ChatConsole.file("type /save " + id + " to download");
     }
 
     private void sendRequestedFile(String id) throws IOException {
@@ -167,7 +174,7 @@ public class ChatSession implements AutoCloseable {
             output.writeUTF(id);
             output.flush();
         }
-        System.out.println("[file] sent " + path + " for " + id);
+        ChatConsole.file("sent " + path + " for " + id);
     }
 
     private void receiveFile() throws IOException {
@@ -210,7 +217,7 @@ public class ChatSession implements AutoCloseable {
             throw new IOException("file size mismatch for " + id + ": expected " + size + ", got " + received);
         }
         remoteOffers.remove(id);
-        System.out.println("[file] saved " + target);
+        ChatConsole.file("saved " + target);
     }
 
     private void sendNotice(String message) throws IOException {

@@ -3,6 +3,7 @@ package p2p.quic;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.net.DatagramSocket;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -22,17 +23,32 @@ import org.springframework.stereotype.Service;
 public class QuicTransportService {
     public static final String APPLICATION_PROTOCOL = "dropgoline-file/1";
     private static final NullLogger LOGGER = new NullLogger();
+    private static final String INSECURE_CERT_WARNING =
+            "SECURITY WARNING: INSECURE configuration! Server certificate validation is disabled;";
 
     public QuicChannel connect(DatagramSocket iceSocket, String remoteAddress, int remotePort) throws IOException {
-        QuicClientConnection connection = QuicClientConnection.newBuilder()
-                .uri(quicUri(remoteAddress, remotePort))
-                .applicationProtocol(APPLICATION_PROTOCOL)
-                .socketFactory(address -> iceSocket)
-                .logger(LOGGER)
-                .noServerCertificateCheck()
-                .build();
+        QuicClientConnection connection = buildClientConnection(iceSocket, remoteAddress, remotePort);
         connection.connect();
         return new KwikClientChannel(connection);
+    }
+
+    private QuicClientConnection buildClientConnection(DatagramSocket iceSocket, String remoteAddress, int remotePort)
+            throws IOException {
+        synchronized (QuicTransportService.class) {
+            PrintStream originalOut = System.out;
+            System.setOut(new WarningFilterPrintStream(originalOut));
+            try {
+                return QuicClientConnection.newBuilder()
+                        .uri(quicUri(remoteAddress, remotePort))
+                        .applicationProtocol(APPLICATION_PROTOCOL)
+                        .socketFactory(address -> iceSocket)
+                        .logger(LOGGER)
+                        .noServerCertificateCheck()
+                        .build();
+            } finally {
+                System.setOut(originalOut);
+            }
+        }
     }
 
     public ServerConnector accept(DatagramSocket iceSocket, InputStream certificate, InputStream privateKey,
@@ -124,6 +140,23 @@ public class QuicTransportService {
         public void close() throws IOException {
             stream.getOutputStream().close();
             stream.getInputStream().close();
+        }
+    }
+
+    private static final class WarningFilterPrintStream extends PrintStream {
+        private final PrintStream delegate;
+
+        private WarningFilterPrintStream(PrintStream delegate) {
+            super(delegate, true);
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void println(String value) {
+            if (value != null && value.startsWith(INSECURE_CERT_WARNING)) {
+                return;
+            }
+            delegate.println(value);
         }
     }
 }

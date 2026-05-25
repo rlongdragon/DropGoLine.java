@@ -22,6 +22,7 @@ public class PeerSignalClient implements AutoCloseable {
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     private final BlockingQueue<SignalMessage> incoming = new LinkedBlockingQueue<>();
+    private final Object sendLock = new Object();
     private final String peerId;
     private final WebSocket webSocket;
 
@@ -42,7 +43,9 @@ public class PeerSignalClient implements AutoCloseable {
 
     public void send(String type, String to, Object payload) throws Exception {
         SignalMessage message = new SignalMessage(type, peerId, to, objectMapper.valueToTree(payload));
-        webSocket.sendText(objectMapper.writeValueAsString(message), true).join();
+        synchronized (sendLock) {
+            webSocket.sendText(objectMapper.writeValueAsString(message), true).join();
+        }
     }
 
     public void sendToServer(String type, Object payload) throws Exception {
@@ -105,7 +108,9 @@ public class PeerSignalClient implements AutoCloseable {
 
     @Override
     public void close() {
-        webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+        synchronized (sendLock) {
+            webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+        }
     }
 
     private final class Listener implements WebSocket.Listener {

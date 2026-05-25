@@ -78,7 +78,7 @@ public class P2pChatCli {
                 default -> usage();
             }
         } catch (Exception e) {
-            System.out.println("[error] " + userMessage(e));
+            ChatConsole.error(userMessage(e));
         }
     }
 
@@ -89,7 +89,7 @@ public class P2pChatCli {
         System.out.print("Enter your name: ");
         String peerId = scanner.nextLine().trim();
         if (peerId.isBlank()) {
-            System.out.println("[error] name is required");
+            ChatConsole.error("name is required");
             return;
         }
 
@@ -106,7 +106,7 @@ public class P2pChatCli {
         String choice = scanner.nextLine().trim();
 
         if ("1".equals(choice)) {
-            System.out.println("Creating room... waiting for code.");
+            ChatConsole.system("creating room... waiting for code.");
             createRoom(peerId, "auto", downloadDirectory, signalingUrl, scanner);
             return;
         }
@@ -115,14 +115,14 @@ public class P2pChatCli {
             System.out.print("Enter Code: ");
             String roomId = scanner.nextLine().trim();
             if (roomId.isBlank()) {
-                System.out.println("[error] room code is required");
+                ChatConsole.error("room code is required");
                 return;
             }
             joinRoom(peerId, roomId, downloadDirectory, signalingUrl, scanner);
             return;
         }
 
-        System.out.println("[error] unknown choice: " + choice);
+        ChatConsole.error("unknown choice: " + choice);
     }
 
     private void createRoom(String peerId, String roomId, Path downloadDirectory, String signalingUrl) throws Exception {
@@ -130,7 +130,7 @@ public class P2pChatCli {
             signal.sendToServer("create-room", Map.of("roomId", roomId));
             SignalMessage created = signal.waitFor("room-created", SIGNAL_TIMEOUT);
             String actualRoomId = created.payload().path("roomId").asText(roomId);
-            System.out.println("[room] created " + actualRoomId + " as " + peerId);
+            ChatConsole.system("room created: " + actualRoomId + " as " + peerId);
 
             RoomChatApp app = new RoomChatApp(signal, peerId, downloadDirectory);
             app.start();
@@ -144,7 +144,7 @@ public class P2pChatCli {
             signal.sendToServer("create-room", Map.of("roomId", roomId));
             SignalMessage created = signal.waitFor("room-created", SIGNAL_TIMEOUT);
             String actualRoomId = created.payload().path("roomId").asText(roomId);
-            System.out.println("[room] created " + actualRoomId + " as " + peerId);
+            ChatConsole.system("room created: " + actualRoomId + " as " + peerId);
 
             RoomChatApp app = new RoomChatApp(signal, peerId, downloadDirectory);
             app.start();
@@ -157,7 +157,7 @@ public class P2pChatCli {
             signal.sendToServer("join-room", Map.of("roomId", roomId));
             SignalMessage joined = signal.waitFor("room-joined", SIGNAL_TIMEOUT);
             String actualRoomId = joined.payload().path("roomId").asText(roomId);
-            System.out.println("[room] joined " + actualRoomId + " as " + peerId);
+            ChatConsole.system("joined room " + actualRoomId + " as " + peerId);
 
             RoomChatApp app = new RoomChatApp(signal, peerId, downloadDirectory);
             app.start();
@@ -174,7 +174,7 @@ public class P2pChatCli {
             signal.sendToServer("join-room", Map.of("roomId", roomId));
             SignalMessage joined = signal.waitFor("room-joined", SIGNAL_TIMEOUT);
             String actualRoomId = joined.payload().path("roomId").asText(roomId);
-            System.out.println("[room] joined " + actualRoomId + " as " + peerId);
+            ChatConsole.system("joined room " + actualRoomId + " as " + peerId);
 
             RoomChatApp app = new RoomChatApp(signal, peerId, downloadDirectory);
             app.start();
@@ -215,7 +215,7 @@ public class P2pChatCli {
         try (InputStream cert = QuicCertificateFiles.certificate();
              InputStream key = QuicCertificateFiles.privateKey()) {
             quic.accept(iceConnection.socket(), cert, key, (input, output) -> {
-                ChatSession chat = new ChatSession(peerId, input, output, downloadDirectory);
+                ChatSession chat = new ChatSession(peerId, offerSignal.from(), input, output, downloadDirectory);
                 chat.expectHello();
                 chat.startReader();
                 chatRef.set(chat);
@@ -255,7 +255,7 @@ public class P2pChatCli {
                 iceConnection.remoteAddress(),
                 iceConnection.remotePort());
              QuicChannel.TransferStream stream = channel.openStream()) {
-            ChatSession chat = new ChatSession(peerId, stream.input(), stream.output(), downloadDirectory);
+            ChatSession chat = new ChatSession(peerId, targetPeerId, stream.input(), stream.output(), downloadDirectory);
             chat.sendHello();
             chat.startReader();
             System.out.println("[chat] connected. Type text, /file <path>, /save <id>, or /quit.");
@@ -268,6 +268,7 @@ public class P2pChatCli {
     private void runDirectConsole(ChatSession chat) throws Exception {
         try (Scanner scanner = new Scanner(System.in)) {
             while (scanner.hasNextLine()) {
+                ChatConsole.prompt();
                 String line = scanner.nextLine();
                 if (line.equals("/quit")) {
                     chat.close();
@@ -277,7 +278,7 @@ public class P2pChatCli {
                     if (line.equals("/file") || line.startsWith("/file ")) {
                         String path = argument(line, "/file");
                         if (path.isBlank()) {
-                            System.out.println("[file] usage: /file <path>");
+                            ChatConsole.file("usage: /file <path>");
                             continue;
                         }
                         chat.offerFile(Path.of(path));
@@ -286,7 +287,7 @@ public class P2pChatCli {
                     if (line.equals("/save") || line.startsWith("/save ")) {
                         String id = argument(line, "/save");
                         if (id.isBlank()) {
-                            System.out.println("[file] usage: /save <offer-id>");
+                            ChatConsole.file("usage: /save <offer-id>");
                             continue;
                         }
                         chat.requestFile(id);
@@ -297,7 +298,7 @@ public class P2pChatCli {
                     }
                     chat.sendText(line);
                 } catch (Exception e) {
-                    System.out.println("[error] " + userMessage(e));
+                    ChatConsole.error(userMessage(e));
                 }
             }
         }
@@ -323,12 +324,13 @@ public class P2pChatCli {
             Thread signalThread = new Thread(this::signalLoop, "room-chat-signal-" + peerId);
             signalThread.setDaemon(true);
             signalThread.start();
-            System.out.println("[chat] room app ready. Type text, /file <path>, /save <id>, or /quit.");
+            ChatConsole.system("room app ready. Type text, /file <path>, /save <id>, or /quit.");
         }
 
         private void runConsole(Scanner scanner) throws Exception {
             try {
                 while (running && scanner.hasNextLine()) {
+                    ChatConsole.prompt();
                     String line = scanner.nextLine();
                     if (line.equals("/quit")) {
                         close();
@@ -336,18 +338,27 @@ public class P2pChatCli {
                     }
                     try {
                         if (line.equals("/file") || line.startsWith("/file ")) {
-                            String path = argument(line, "/file");
-                            if (path.isBlank()) {
-                                System.out.println("[file] usage: /file <path>");
+                            FileCommand command = parseFileCommand(argument(line, "/file"));
+                            if (command == null) {
+                                ChatConsole.file("usage: /file <path> [username]");
                                 continue;
                             }
-                            offerFile(Path.of(path));
+                            offerFile(command.path(), command.targetPeerId());
+                            continue;
+                        }
+                        if (line.equals("/msg") || line.startsWith("/msg ")) {
+                            PrivateMessage command = parsePrivateMessage(argument(line, "/msg"));
+                            if (command == null) {
+                                ChatConsole.notice("usage: /msg <username> <message>");
+                                continue;
+                            }
+                            sendPrivateText(command.peerId(), command.message());
                             continue;
                         }
                         if (line.equals("/save") || line.startsWith("/save ")) {
                             String id = argument(line, "/save");
                             if (id.isBlank()) {
-                                System.out.println("[file] usage: /save <offer-id>");
+                                ChatConsole.file("usage: /save <offer-id>");
                                 continue;
                             }
                             requestFile(id);
@@ -358,7 +369,7 @@ public class P2pChatCli {
                         }
                         sendText(line);
                     } catch (Exception e) {
-                        System.out.println("[error] " + userMessage(e));
+                        ChatConsole.error(userMessage(e));
                     }
                 }
             } finally {
@@ -377,13 +388,13 @@ public class P2pChatCli {
                         case "room-peer-joined" -> {
                             String joinedPeer = message.payload().path("peerId").asText();
                             if (!joinedPeer.isBlank()) {
-                                System.out.println("[room] " + joinedPeer + " joined; waiting for direct offer");
+                                ChatConsole.system(joinedPeer + " joined the room; waiting for direct offer");
                             }
                         }
                         case "chat-offer" -> acceptPeer(message);
                         case "chat-answer" -> completeAnswer(message);
                         case "room-relay" -> receiveRelay(message);
-                        case "error" -> System.out.println("[signal] " + message.payload());
+                        case "error" -> ChatConsole.error("signal: " + message.payload());
                         default -> {
                         }
                     }
@@ -392,7 +403,7 @@ public class P2pChatCli {
                     return;
                 } catch (Exception e) {
                     if (running) {
-                        System.out.println("[signal] " + e.getMessage());
+                        ChatConsole.error("signal: " + e.getMessage());
                     }
                 }
             }
@@ -415,23 +426,23 @@ public class P2pChatCli {
                     IceDescription answer = answerFuture.get(SIGNAL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
                     ice.setRemoteDescription(session, answer);
 
-                    System.out.println("[chat] establishing ICE path to " + remotePeerId);
+                    ChatConsole.system("establishing direct path to " + remotePeerId);
                     IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
                     try (QuicChannel channel = quic.connect(
                             iceConnection.socket(),
                             iceConnection.remoteAddress(),
                             iceConnection.remotePort());
                          QuicChannel.TransferStream stream = channel.openStream()) {
-                        ChatSession chat = new ChatSession(peerId, stream.input(), stream.output(), downloadDirectory);
+                        ChatSession chat = new ChatSession(peerId, remotePeerId, stream.input(), stream.output(), downloadDirectory);
                         chat.sendHello();
                         chat.startReader();
                         sessionsByPeer.put(remotePeerId, chat);
-                        System.out.println("[System] Direct Link established with " + remotePeerId);
+                        ChatConsole.system("direct link established with " + remotePeerId);
                         chat.waitUntilClosed();
                     }
                 } catch (Exception e) {
                     if (running) {
-                        System.out.println("[chat] direct link to " + remotePeerId + " failed: " + e.getMessage());
+                        ChatConsole.error("direct link to " + remotePeerId + " failed: " + userMessage(e));
                     }
                 } finally {
                     connectingPeers.remove(remotePeerId);
@@ -458,18 +469,18 @@ public class P2pChatCli {
                     ice.setRemoteDescription(session, offer);
                     signal.send("chat-answer", remotePeerId, session.localDescription());
 
-                    System.out.println("[chat] establishing ICE path to " + remotePeerId);
+                    ChatConsole.system("establishing direct path to " + remotePeerId);
                     IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
                     CountDownLatch accepted = new CountDownLatch(1);
                     try (InputStream cert = QuicCertificateFiles.certificate();
                          InputStream key = QuicCertificateFiles.privateKey()) {
                         quic.accept(iceConnection.socket(), cert, key, (input, output) -> {
-                            ChatSession chat = new ChatSession(peerId, input, output, downloadDirectory);
+                            ChatSession chat = new ChatSession(peerId, remotePeerId, input, output, downloadDirectory);
                             chat.expectHello();
                             chat.startReader();
                             chatRef.set(chat);
                             sessionsByPeer.put(remotePeerId, chat);
-                            System.out.println("[System] Direct Link established with " + remotePeerId);
+                            ChatConsole.system("direct link established with " + remotePeerId);
                             accepted.countDown();
                             try {
                                 chat.waitUntilClosed();
@@ -485,7 +496,7 @@ public class P2pChatCli {
                     }
                 } catch (Exception e) {
                     if (running) {
-                        System.out.println("[chat] direct link from " + remotePeerId + " failed: " + e.getMessage());
+                        ChatConsole.error("direct link from " + remotePeerId + " failed: " + userMessage(e));
                     }
                 } finally {
                     ChatSession chat = chatRef.get();
@@ -514,34 +525,79 @@ public class P2pChatCli {
             }
             String content = message.payload().path("message").asText("");
             if (!content.isBlank()) {
-                System.out.println("[" + sender + "](Relay): " + content);
+                ChatConsole.relay(sender, content);
             }
         }
 
         private void sendText(String text) throws Exception {
-            for (ChatSession session : sessionsByPeer.values()) {
-                session.sendText(text);
+            for (Map.Entry<String, ChatSession> entry : sessionsByPeer.entrySet()) {
+                try {
+                    entry.getValue().sendText(text);
+                } catch (Exception e) {
+                    sessionsByPeer.remove(entry.getKey());
+                    ChatConsole.error("direct message to " + entry.getKey() + " failed: " + userMessage(e));
+                }
             }
             signal.sendToServer("room-relay", Map.of("message", text));
         }
 
-        private void offerFile(Path path) throws Exception {
-            if (sessionsByPeer.isEmpty()) {
-                System.out.println("[file] no direct peers connected yet");
+        private void sendPrivateText(String remotePeerId, String text) throws Exception {
+            ChatSession session = sessionsByPeer.get(remotePeerId);
+            if (session == null) {
+                ChatConsole.error("unknown or disconnected user: " + remotePeerId);
                 return;
             }
-            for (ChatSession session : sessionsByPeer.values()) {
+            try {
+                session.sendText("(private) " + text);
+                ChatConsole.notice("private message sent to " + remotePeerId);
+            } catch (Exception e) {
+                sessionsByPeer.remove(remotePeerId);
+                ChatConsole.error("private message to " + remotePeerId + " failed: " + userMessage(e));
+            }
+        }
+
+        private void offerFile(Path path, String remotePeerId) throws Exception {
+            if (remotePeerId != null && !remotePeerId.isBlank()) {
+                offerFileTo(path, remotePeerId);
+                return;
+            }
+            if (sessionsByPeer.isEmpty()) {
+                ChatConsole.file("no direct peers connected yet");
+                return;
+            }
+            for (Map.Entry<String, ChatSession> entry : sessionsByPeer.entrySet()) {
+                offerFileTo(path, entry.getKey());
+            }
+        }
+
+        private void offerFileTo(Path path, String remotePeerId) throws Exception {
+            ChatSession session = sessionsByPeer.get(remotePeerId);
+            if (session == null) {
+                ChatConsole.error("unknown or disconnected user: " + remotePeerId);
+                return;
+            }
+            try {
                 session.offerFile(path);
+            } catch (Exception e) {
+                if (!"file does not exist: ".equals(userMessage(e))) {
+                    sessionsByPeer.remove(remotePeerId);
+                }
+                ChatConsole.error("file offer to " + remotePeerId + " failed: " + userMessage(e));
             }
         }
 
         private void requestFile(String id) throws Exception {
             if (sessionsByPeer.isEmpty()) {
-                System.out.println("[file] no direct peers connected yet");
+                ChatConsole.file("no direct peers connected yet");
                 return;
             }
-            for (ChatSession session : sessionsByPeer.values()) {
-                session.requestFile(id);
+            for (Map.Entry<String, ChatSession> entry : sessionsByPeer.entrySet()) {
+                try {
+                    entry.getValue().requestFile(id);
+                } catch (Exception e) {
+                    sessionsByPeer.remove(entry.getKey());
+                    ChatConsole.error("file request to " + entry.getKey() + " failed: " + userMessage(e));
+                }
             }
         }
 
@@ -606,9 +662,35 @@ public class P2pChatCli {
         return line.length() <= command.length() ? "" : line.substring(command.length()).trim();
     }
 
+    private static PrivateMessage parsePrivateMessage(String value) {
+        String[] parts = value.trim().split("\\s+", 2);
+        if (parts.length < 2 || parts[0].isBlank() || parts[1].isBlank()) {
+            return null;
+        }
+        return new PrivateMessage(parts[0], parts[1]);
+    }
+
+    private static FileCommand parseFileCommand(String value) {
+        String[] parts = value.trim().split("\\s+", 2);
+        if (parts.length == 0 || parts[0].isBlank()) {
+            return null;
+        }
+        String target = parts.length == 2 && !parts[1].isBlank() ? parts[1].trim() : null;
+        if (target != null && target.contains(" ")) {
+            return null;
+        }
+        return new FileCommand(Path.of(parts[0]), target);
+    }
+
     private static String userMessage(Exception e) {
         String message = e.getMessage();
         return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
+    }
+
+    private record PrivateMessage(String peerId, String message) {
+    }
+
+    private record FileCommand(Path path, String targetPeerId) {
     }
 
     private static void usage() {
