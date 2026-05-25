@@ -1,3 +1,5 @@
 target/
+received/
+some-file.txt
 .m2/
 *.log

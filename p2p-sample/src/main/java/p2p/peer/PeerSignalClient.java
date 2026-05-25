@@ -36,6 +36,10 @@ public class PeerSignalClient implements AutoCloseable {
         webSocket.sendText(objectMapper.writeValueAsString(message), true).join();
     }
 
+    public void sendToServer(String type, Object payload) throws Exception {
+        send(type, "signal", payload);
+    }
+
     public <T> T waitForPayload(String type, Class<T> payloadType, Duration timeout) throws Exception {
         long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {

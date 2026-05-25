@@ -13,6 +13,7 @@ import p2p.ice.IceNegotiationService.IceConnection;
 import p2p.ice.IceNegotiationService.IceSession;
 import p2p.ice.IceServerConfig;
 import p2p.quic.QuicChannel;
+import p2p.quic.QuicCertificateFiles;
 import p2p.quic.QuicTransportService;
 import p2p.signaling.SignalMessage;
 import p2p.transfer.ChecksumService;
@@ -69,8 +70,8 @@ public class P2pPeerCli {
             IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
             System.out.println("[listen] ICE selected " + iceConnection.remoteAddress() + ":" + iceConnection.remotePort());
 
-            try (InputStream cert = resource("/certs/quic-cert.pem");
-                 InputStream key = resource("/certs/quic-key.pem")) {
+            try (InputStream cert = QuicCertificateFiles.certificate();
+                 InputStream key = QuicCertificateFiles.privateKey()) {
                 CountDownLatch done = new CountDownLatch(1);
                 quic.accept(iceConnection.socket(), cert, key, (input, output) -> {
                     Path received = transfer.receive(input, output, outputDirectory);
@@ -130,14 +131,6 @@ public class P2pPeerCli {
 
     private static String defaultSignalUrl() {
         return env("SIGNALING_URL", "ws://127.0.0.1:8080/signal");
-    }
-
-    private static InputStream resource(String path) {
-        InputStream stream = P2pPeerCli.class.getResourceAsStream(path);
-        if (stream == null) {
-            throw new IllegalStateException("missing resource " + path);
-        }
-        return stream;
     }
 
     private static void usage() {

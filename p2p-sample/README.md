@@ -20,6 +20,25 @@ file-transfer stack.
 mvn package
 ```
 
+## Local QUIC Certificate
+
+Do not commit private keys. Generate local demo certificate files under ignored
+`target/dev-certs` before running a peer that accepts QUIC connections:
+
+```sh
+mkdir -p target/dev-certs
+openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+  -keyout target/dev-certs/quic-key.pem \
+  -out target/dev-certs/quic-cert.pem \
+  -subj "/CN=localhost"
+```
+
+You can also point to your own files:
+
+```sh
+QUIC_CERT_PATH=/secure/quic-cert.pem QUIC_KEY_PATH=/secure/quic-key.pem ...
+```
+
 ## Run Signaling Server
 
 ```sh
@@ -93,21 +112,25 @@ Terminal 1, signaling server:
 java -jar target/java-p2p.jar --server.port=18080
 ```
 
-Terminal 2, Bob waits for chat and saves downloads under `./bob-downloads`:
+Terminal 2, Bob creates a room and saves downloads under `./bob-downloads`:
 
 ```sh
 STUN_SERVER= P2P_UDP_PREFERRED_PORT=50000 mvn exec:java \
   -Dexec.mainClass=p2p.chat.P2pChatCli \
-  -Dexec.args="listen bob ./bob-downloads ws://127.0.0.1:18080/signal"
+  -Dexec.args="create bob room-123 ./bob-downloads ws://127.0.0.1:18080/signal"
 ```
 
-Terminal 3, Alice connects to Bob and saves downloads under `./alice-downloads`:
+Terminal 3, Alice joins that room and saves downloads under `./alice-downloads`:
 
 ```sh
 STUN_SERVER= P2P_UDP_PREFERRED_PORT=50010 mvn exec:java \
   -Dexec.mainClass=p2p.chat.P2pChatCli \
-  -Dexec.args="connect alice bob ./alice-downloads ws://127.0.0.1:18080/signal"
+  -Dexec.args="join alice room-123 ./alice-downloads ws://127.0.0.1:18080/signal"
 ```
+
+Direct peer commands are still available for debugging:
+`listen <peerId> <downloadDir> [signalUrl]` and
+`connect <peerId> <targetPeerId> <downloadDir> [signalUrl]`.
 
 Chat commands:
 
@@ -149,4 +172,4 @@ The new Spring Boot application entry point is `p2p.P2pApplication`.
 
 1. Configure coturn on the VPS and set `TURN_SERVER`, `TURN_USERNAME`, and `TURN_PASSWORD`.
 2. Persist transfer state if you want resume after process restart.
-3. Replace the bundled sample QUIC certificate before using this outside a demo environment.
+3. Replace local demo QUIC certificates before using this outside a demo environment.

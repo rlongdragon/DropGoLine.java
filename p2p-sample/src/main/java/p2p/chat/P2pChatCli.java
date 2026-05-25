@@ -3,6 +3,7 @@ package p2p.chat;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
@@ -16,6 +17,7 @@ import p2p.ice.IceNegotiationService.IceSession;
 import p2p.ice.IceServerConfig;
 import p2p.peer.PeerSignalClient;
 import p2p.quic.QuicChannel;
+import p2p.quic.QuicCertificateFiles;
 import p2p.quic.QuicTransportService;
 import p2p.signaling.SignalMessage;
 
@@ -35,6 +37,20 @@ public class P2pChatCli {
 
         P2pChatCli cli = new P2pChatCli();
         switch (args[0]) {
+            case "create" -> {
+                if (args.length < 4) {
+                    usage();
+                    return;
+                }
+                cli.createRoom(args[1], args[2], Path.of(args[3]), args.length >= 5 ? args[4] : defaultSignalUrl());
+            }
+            case "join" -> {
+                if (args.length < 4) {
+                    usage();
+                    return;
+                }
+                cli.joinRoom(args[1], args[2], Path.of(args[3]), args.length >= 5 ? args[4] : defaultSignalUrl());
+            }
             case "listen" -> {
                 if (args.length < 3) {
                     usage();
@@ -53,75 +69,107 @@ public class P2pChatCli {
         }
     }
 
+    private void createRoom(String peerId, String roomId, Path downloadDirectory, String signalingUrl) throws Exception {
+        try (PeerSignalClient signal = new PeerSignalClient(signalingUrl, peerId)) {
+            signal.sendToServer("create-room", Map.of("roomId", roomId));
+            signal.waitFor("room-created", SIGNAL_TIMEOUT);
+            System.out.println("[room] created " + roomId + " as " + peerId);
+            System.out.println("[room] waiting for another peer to join");
+
+            SignalMessage joined = signal.waitFor("room-peer-joined", SIGNAL_TIMEOUT);
+            String targetPeerId = joined.payload().path("peerId").asText();
+            System.out.println("[room] " + targetPeerId + " joined " + roomId);
+            acceptChat(signal, peerId, downloadDirectory);
+        }
+    }
+
+    private void joinRoom(String peerId, String roomId, Path downloadDirectory, String signalingUrl) throws Exception {
+        try (PeerSignalClient signal = new PeerSignalClient(signalingUrl, peerId)) {
+            signal.sendToServer("join-room", Map.of("roomId", roomId));
+            SignalMessage joined = signal.waitFor("room-joined", SIGNAL_TIMEOUT);
+            String hostPeerId = joined.payload().path("peerId").asText();
+            System.out.println("[room] joined " + roomId + ", host is " + hostPeerId);
+            connectChat(signal, peerId, hostPeerId, downloadDirectory);
+        }
+    }
+
     private void listen(String peerId, Path downloadDirectory, String signalingUrl) throws Exception {
         try (PeerSignalClient signal = new PeerSignalClient(signalingUrl, peerId)) {
-            System.out.println("[chat] waiting for offer as " + peerId);
-            SignalMessage offerSignal = signal.waitFor("chat-offer", SIGNAL_TIMEOUT);
-            IceDescription offer = objectMapper.treeToValue(offerSignal.payload(), IceDescription.class);
-
-            IceSession session = ice.createSession(peerId, false, iceConfig());
-            ice.setRemoteDescription(session, offer);
-            signal.send("chat-answer", offerSignal.from(), session.localDescription());
-
-            System.out.println("[chat] establishing ICE path");
-            IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
-            System.out.println("[chat] ICE selected " + iceConnection.remoteAddress() + ":" + iceConnection.remotePort());
-
-            CountDownLatch accepted = new CountDownLatch(1);
-            AtomicReference<ChatSession> chatRef = new AtomicReference<>();
-            try (InputStream cert = resource("/certs/quic-cert.pem");
-                 InputStream key = resource("/certs/quic-key.pem")) {
-                quic.accept(iceConnection.socket(), cert, key, (input, output) -> {
-                    ChatSession chat = new ChatSession(peerId, input, output, downloadDirectory);
-                    chat.expectHello();
-                    chat.startReader();
-                    chatRef.set(chat);
-                    accepted.countDown();
-                    try {
-                        chat.waitUntilClosed();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                });
-
-                System.out.println("[chat] waiting for QUIC chat stream");
-                accepted.await();
-                System.out.println("[chat] connected. Type text, /file <path>, /save <id>, or /quit.");
-                runConsole(chatRef.get());
-            } finally {
-                ChatSession chat = chatRef.get();
-                if (chat != null) {
-                    chat.close();
-                }
-                ice.free(session);
-            }
+            acceptChat(signal, peerId, downloadDirectory);
         }
     }
 
     private void connect(String peerId, String targetPeerId, Path downloadDirectory, String signalingUrl) throws Exception {
         try (PeerSignalClient signal = new PeerSignalClient(signalingUrl, peerId)) {
-            IceSession session = ice.createSession(peerId, true, iceConfig());
-            signal.send("chat-offer", targetPeerId, session.localDescription());
-            IceDescription answer = signal.waitForPayload("chat-answer", IceDescription.class, SIGNAL_TIMEOUT);
-            ice.setRemoteDescription(session, answer);
+            connectChat(signal, peerId, targetPeerId, downloadDirectory);
+        }
+    }
 
-            System.out.println("[chat] establishing ICE path");
-            IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
-            System.out.println("[chat] ICE selected " + iceConnection.remoteAddress() + ":" + iceConnection.remotePort());
+    private void acceptChat(PeerSignalClient signal, String peerId, Path downloadDirectory) throws Exception {
+        System.out.println("[chat] waiting for offer as " + peerId);
+        SignalMessage offerSignal = signal.waitFor("chat-offer", SIGNAL_TIMEOUT);
+        IceDescription offer = objectMapper.treeToValue(offerSignal.payload(), IceDescription.class);
 
-            try (QuicChannel channel = quic.connect(
-                    iceConnection.socket(),
-                    iceConnection.remoteAddress(),
-                    iceConnection.remotePort());
-                 QuicChannel.TransferStream stream = channel.openStream()) {
-                ChatSession chat = new ChatSession(peerId, stream.input(), stream.output(), downloadDirectory);
-                chat.sendHello();
+        IceSession session = ice.createSession(peerId, false, iceConfig());
+        ice.setRemoteDescription(session, offer);
+        signal.send("chat-answer", offerSignal.from(), session.localDescription());
+
+        System.out.println("[chat] establishing ICE path");
+        IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
+        System.out.println("[chat] ICE selected " + iceConnection.remoteAddress() + ":" + iceConnection.remotePort());
+
+        CountDownLatch accepted = new CountDownLatch(1);
+        AtomicReference<ChatSession> chatRef = new AtomicReference<>();
+        try (InputStream cert = QuicCertificateFiles.certificate();
+             InputStream key = QuicCertificateFiles.privateKey()) {
+            quic.accept(iceConnection.socket(), cert, key, (input, output) -> {
+                ChatSession chat = new ChatSession(peerId, input, output, downloadDirectory);
+                chat.expectHello();
                 chat.startReader();
-                System.out.println("[chat] connected. Type text, /file <path>, /save <id>, or /quit.");
-                runConsole(chat);
-            } finally {
-                ice.free(session);
+                chatRef.set(chat);
+                accepted.countDown();
+                try {
+                    chat.waitUntilClosed();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+
+            System.out.println("[chat] waiting for QUIC chat stream");
+            accepted.await();
+            System.out.println("[chat] connected. Type text, /file <path>, /save <id>, or /quit.");
+            runConsole(chatRef.get());
+        } finally {
+            ChatSession chat = chatRef.get();
+            if (chat != null) {
+                chat.close();
             }
+            ice.free(session);
+        }
+    }
+
+    private void connectChat(PeerSignalClient signal, String peerId, String targetPeerId, Path downloadDirectory) throws Exception {
+        IceSession session = ice.createSession(peerId, true, iceConfig());
+        signal.send("chat-offer", targetPeerId, session.localDescription());
+        IceDescription answer = signal.waitForPayload("chat-answer", IceDescription.class, SIGNAL_TIMEOUT);
+        ice.setRemoteDescription(session, answer);
+
+        System.out.println("[chat] establishing ICE path");
+        IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
+        System.out.println("[chat] ICE selected " + iceConnection.remoteAddress() + ":" + iceConnection.remotePort());
+
+        try (QuicChannel channel = quic.connect(
+                iceConnection.socket(),
+                iceConnection.remoteAddress(),
+                iceConnection.remotePort());
+             QuicChannel.TransferStream stream = channel.openStream()) {
+            ChatSession chat = new ChatSession(peerId, stream.input(), stream.output(), downloadDirectory);
+            chat.sendHello();
+            chat.startReader();
+            System.out.println("[chat] connected. Type text, /file <path>, /save <id>, or /quit.");
+            runConsole(chat);
+        } finally {
+            ice.free(session);
         }
     }
 
@@ -173,16 +221,10 @@ public class P2pChatCli {
         return env("SIGNALING_URL", "ws://127.0.0.1:8080/signal");
     }
 
-    private static InputStream resource(String path) {
-        InputStream stream = P2pChatCli.class.getResourceAsStream(path);
-        if (stream == null) {
-            throw new IllegalStateException("missing resource " + path);
-        }
-        return stream;
-    }
-
     private static void usage() {
         System.out.println("Usage:");
+        System.out.println("  java ... p2p.chat.P2pChatCli create <peerId> <roomId> <downloadDir> [ws://host:8080/signal]");
+        System.out.println("  java ... p2p.chat.P2pChatCli join <peerId> <roomId> <downloadDir> [ws://host:8080/signal]");
         System.out.println("  java ... p2p.chat.P2pChatCli listen <peerId> <downloadDir> [ws://host:8080/signal]");
         System.out.println("  java ... p2p.chat.P2pChatCli connect <peerId> <targetPeerId> <downloadDir> [ws://host:8080/signal]");
     }
