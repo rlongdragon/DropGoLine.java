@@ -14,6 +14,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,7 +42,9 @@ public class P2pChatCli {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public static void main(String[] args) throws Exception {
+        quietLibraryLogs();
         P2pChatCli cli = new P2pChatCli();
+        int exitCode = 0;
         try {
             if (args.length == 0) {
                 cli.runInteractive();
@@ -78,7 +83,10 @@ public class P2pChatCli {
                 default -> usage();
             }
         } catch (Exception e) {
+            exitCode = 1;
             ChatConsole.error(userMessage(e));
+        } finally {
+            System.exit(exitCode);
         }
     }
 
@@ -198,7 +206,7 @@ public class P2pChatCli {
     }
 
     private void acceptChat(PeerSignalClient signal, String peerId, Path downloadDirectory) throws Exception {
-        System.out.println("[chat] waiting for offer as " + peerId);
+        ChatConsole.system("waiting for offer as " + peerId);
         SignalMessage offerSignal = signal.waitFor("chat-offer", SIGNAL_TIMEOUT);
         IceDescription offer = objectMapper.treeToValue(offerSignal.payload(), IceDescription.class);
 
@@ -206,9 +214,9 @@ public class P2pChatCli {
         ice.setRemoteDescription(session, offer);
         signal.send("chat-answer", offerSignal.from(), session.localDescription());
 
-        System.out.println("[chat] establishing ICE path");
+        ChatConsole.system("establishing ICE path");
         IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
-        System.out.println("[chat] ICE selected " + iceConnection.remoteAddress() + ":" + iceConnection.remotePort());
+        ChatConsole.system("ICE selected " + iceConnection.remoteAddress() + ":" + iceConnection.remotePort());
 
         CountDownLatch accepted = new CountDownLatch(1);
         AtomicReference<ChatSession> chatRef = new AtomicReference<>();
@@ -227,9 +235,9 @@ public class P2pChatCli {
                 }
             });
 
-            System.out.println("[chat] waiting for QUIC chat stream");
+            ChatConsole.system("waiting for QUIC chat stream");
             accepted.await();
-            System.out.println("[chat] connected. Type text, /file <path>, /save <id>, or /quit.");
+            ChatConsole.system("connected. Type text, /file <path>, /save <id>, or /quit.");
             runDirectConsole(chatRef.get());
         } finally {
             ChatSession chat = chatRef.get();
@@ -246,9 +254,9 @@ public class P2pChatCli {
         IceDescription answer = signal.waitForPayload("chat-answer", IceDescription.class, SIGNAL_TIMEOUT);
         ice.setRemoteDescription(session, answer);
 
-        System.out.println("[chat] establishing ICE path");
+        ChatConsole.system("establishing ICE path");
         IceConnection iceConnection = ice.establish(session, ICE_TIMEOUT);
-        System.out.println("[chat] ICE selected " + iceConnection.remoteAddress() + ":" + iceConnection.remotePort());
+        ChatConsole.system("ICE selected " + iceConnection.remoteAddress() + ":" + iceConnection.remotePort());
 
         try (QuicChannel channel = quic.connect(
                 iceConnection.socket(),
@@ -258,7 +266,7 @@ public class P2pChatCli {
             ChatSession chat = new ChatSession(peerId, targetPeerId, stream.input(), stream.output(), downloadDirectory);
             chat.sendHello();
             chat.startReader();
-            System.out.println("[chat] connected. Type text, /file <path>, /save <id>, or /quit.");
+            ChatConsole.system("connected. Type text, /file <path>, /save <id>, or /quit.");
             runDirectConsole(chat);
         } finally {
             ice.free(session);
@@ -267,9 +275,14 @@ public class P2pChatCli {
 
     private void runDirectConsole(ChatSession chat) throws Exception {
         try (Scanner scanner = new Scanner(System.in)) {
-            while (scanner.hasNextLine()) {
+            while (true) {
                 ChatConsole.prompt();
+                if (!scanner.hasNextLine()) {
+                    ChatConsole.acceptedInput();
+                    return;
+                }
                 String line = scanner.nextLine();
+                ChatConsole.acceptedInput();
                 if (line.equals("/quit")) {
                     chat.close();
                     return;
@@ -329,9 +342,14 @@ public class P2pChatCli {
 
         private void runConsole(Scanner scanner) throws Exception {
             try {
-                while (running && scanner.hasNextLine()) {
+                while (running) {
                     ChatConsole.prompt();
+                    if (!scanner.hasNextLine()) {
+                        ChatConsole.acceptedInput();
+                        return;
+                    }
                     String line = scanner.nextLine();
+                    ChatConsole.acceptedInput();
                     if (line.equals("/quit")) {
                         close();
                         return;
@@ -579,7 +597,7 @@ public class P2pChatCli {
             try {
                 session.offerFile(path);
             } catch (Exception e) {
-                if (!"file does not exist: ".equals(userMessage(e))) {
+                if (!userMessage(e).startsWith("file does not exist: ")) {
                     sessionsByPeer.remove(remotePeerId);
                 }
                 ChatConsole.error("file offer to " + remotePeerId + " failed: " + userMessage(e));
@@ -699,5 +717,16 @@ public class P2pChatCli {
         System.out.println("  java ... p2p.chat.P2pChatCli join <peerId> <roomId> <downloadDir> [ws://host:8080/signal]");
         System.out.println("  java ... p2p.chat.P2pChatCli listen <peerId> <downloadDir> [ws://host:8080/signal]");
         System.out.println("  java ... p2p.chat.P2pChatCli connect <peerId> <targetPeerId> <downloadDir> [ws://host:8080/signal]");
+    }
+
+    private static void quietLibraryLogs() {
+        Logger root = Logger.getLogger("");
+        root.setLevel(Level.SEVERE);
+        for (Handler handler : root.getHandlers()) {
+            handler.setLevel(Level.SEVERE);
+        }
+        Logger.getLogger("org.jitsi").setLevel(Level.OFF);
+        Logger.getLogger("org.jitsi.utils").setLevel(Level.OFF);
+        Logger.getLogger("org.ice4j").setLevel(Level.OFF);
     }
 }

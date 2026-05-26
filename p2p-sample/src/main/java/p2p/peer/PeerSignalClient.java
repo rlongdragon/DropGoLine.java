@@ -44,7 +44,11 @@ public class PeerSignalClient implements AutoCloseable {
     public void send(String type, String to, Object payload) throws Exception {
         SignalMessage message = new SignalMessage(type, peerId, to, objectMapper.valueToTree(payload));
         synchronized (sendLock) {
-            webSocket.sendText(objectMapper.writeValueAsString(message), true).join();
+            try {
+                webSocket.sendText(objectMapper.writeValueAsString(message), true).join();
+            } catch (CompletionException e) {
+                throw new IOException("signaling connection is closed", e);
+            }
         }
     }
 
@@ -109,7 +113,10 @@ public class PeerSignalClient implements AutoCloseable {
     @Override
     public void close() {
         synchronized (sendLock) {
-            webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+            try {
+                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+            } catch (Exception ignored) {
+            }
         }
     }
 

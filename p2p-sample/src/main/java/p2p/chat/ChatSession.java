@@ -6,12 +6,14 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.SocketException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ChatSession implements AutoCloseable {
     private final String localPeerId;
@@ -20,6 +22,7 @@ public class ChatSession implements AutoCloseable {
     private final DataInputStream input;
     private final DataOutputStream output;
     private final CountDownLatch closed = new CountDownLatch(1);
+    private final AtomicBoolean closedOnce = new AtomicBoolean();
     private final Map<String, Path> localOffers = new ConcurrentHashMap<>();
     private final Map<String, RemoteOffer> remoteOffers = new ConcurrentHashMap<>();
     private volatile boolean running = true;
@@ -102,7 +105,12 @@ public class ChatSession implements AutoCloseable {
 
     @Override
     public void close() {
+        if (!closedOnce.compareAndSet(false, true)) {
+            return;
+        }
         running = false;
+        closeQuietly(input);
+        closeQuietly(output);
         closed.countDown();
     }
 
@@ -121,9 +129,17 @@ public class ChatSession implements AutoCloseable {
             }
         } catch (EOFException ignored) {
             ChatConsole.system(remotePeerId + " disconnected");
+        } catch (SocketException e) {
+            if (running) {
+                ChatConsole.system(remotePeerId + " disconnected");
+            }
         } catch (Exception e) {
             if (running) {
-                ChatConsole.error(e.getMessage());
+                if (isClosedConnection(e)) {
+                    ChatConsole.system(remotePeerId + " disconnected");
+                } else {
+                    ChatConsole.error(e.getMessage());
+                }
             }
         } finally {
             close();
@@ -230,6 +246,21 @@ public class ChatSession implements AutoCloseable {
 
     private String sanitizeFileName(String fileName) {
         return Path.of(fileName).getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private boolean isClosedConnection(Exception e) {
+        String message = e.getMessage();
+        return message != null
+                && (message.equalsIgnoreCase("Connection closed")
+                || message.equalsIgnoreCase("Socket closed")
+                || message.contains("ClosedChannelException"));
+    }
+
+    private void closeQuietly(AutoCloseable closeable) {
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+        }
     }
 
     private record RemoteOffer(String fileName, long size) {
