@@ -39,6 +39,21 @@ final class ChatConsole {
         }
     }
 
+    static synchronized void inputMode(boolean command) {
+        promptMode = command ? "command" : "message";
+    }
+
+    static synchronized void redrawInput(String line, int cursor) {
+        System.out.print(CLEAR_LINE);
+        printPrompt();
+        System.out.print(line);
+        int moveLeft = line.length() - cursor;
+        if (moveLeft > 0) {
+            System.out.print("\033[" + moveLeft + "D");
+        }
+        System.out.flush();
+    }
+
     static synchronized void incoming(String username, String message) {
         event(CYAN + username + " >>> " + RESET + message);
     }

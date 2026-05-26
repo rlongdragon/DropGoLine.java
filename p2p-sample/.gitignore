@@ -1,5 +1,9 @@
 target/
 received/
+downloads/
 some-file.txt
 .m2/
 *.log
+*-log.txt
+.agents/
+skills-lock.json

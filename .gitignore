@@ -3,6 +3,13 @@
 
 # Log file
 *.log
+*-log.txt
+rlong-log.txt
+alice-log.txt
+bob-log.txt
+downloads/
+.agents/
+skills-lock.json
 
 # BlueJ files
 *.ctxt
