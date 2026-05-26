@@ -17,7 +17,7 @@ final class ChatInput implements AutoCloseable {
         this.fallback = fallback;
         this.savedTtyState = readTtyState();
         this.input = openTtyInput();
-        this.rawMode = input != null && savedTtyState != null && setTtyMode("raw -echo min 1 time 0");
+        this.rawMode = input != null && savedTtyState != null && setTtyMode("-icanon -echo min 1 time 0");
     }
 
     String readLine() throws IOException {
@@ -34,11 +34,13 @@ final class ChatInput implements AutoCloseable {
             }
             char c = (char) read;
             if (c == '\r' || c == '\n') {
-                System.out.println();
+                System.out.print("\r\n");
+                System.out.flush();
                 return line.toString();
             }
             if (c == 3) {
-                System.out.println();
+                System.out.print("\r\n");
+                System.out.flush();
                 return "/quit";
             }
             if (c == 127 || c == '\b') {
