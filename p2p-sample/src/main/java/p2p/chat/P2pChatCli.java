@@ -432,7 +432,8 @@ public class P2pChatCli {
                         case "chat-offer" -> acceptPeer(message);
                         case "chat-answer" -> completeAnswer(message);
                         case "room-relay" -> receiveRelay(message);
-                        case "error" -> ChatConsole.error("signal: " + message.payload());
+                        case "room-private-relay" -> receivePrivateRelay(message);
+                        case "error" -> ChatConsole.error("signal: " + signalErrorText(message));
                         default -> {
                         }
                     }
@@ -480,8 +481,9 @@ public class P2pChatCli {
                         chat.waitUntilClosed();
                     }
                 } catch (Exception e) {
-                    if (running) {
-                        ChatConsole.error("direct link to " + remotePeerId + " failed: " + userMessage(e));
+                    if (running && connectingPeers.contains(remotePeerId)) {
+                        ChatConsole.notice("direct link to " + remotePeerId
+                                + " unavailable; text will use relay fallback: " + userMessage(e));
                     }
                 } finally {
                     connectingPeers.remove(remotePeerId);
@@ -536,7 +538,8 @@ public class P2pChatCli {
                     }
                 } catch (Exception e) {
                     if (running) {
-                        ChatConsole.error("direct link from " + remotePeerId + " failed: " + userMessage(e));
+                        ChatConsole.notice("direct link from " + remotePeerId
+                                + " unavailable; text will use relay fallback: " + userMessage(e));
                     }
                 } finally {
                     ChatSession chat = chatRef.get();
@@ -569,6 +572,13 @@ public class P2pChatCli {
             }
         }
 
+        private void receivePrivateRelay(SignalMessage message) {
+            String content = message.payload().path("message").asText("");
+            if (!content.isBlank()) {
+                ChatConsole.privateRelay(message.from(), content);
+            }
+        }
+
         private void removePeer(String remotePeerId) {
             ChatSession session = sessionsByPeer.remove(remotePeerId);
             if (session != null) {
@@ -592,17 +602,19 @@ public class P2pChatCli {
 
         private void sendPrivateText(String remotePeerId, String text) throws Exception {
             ChatSession session = sessionsByPeer.get(remotePeerId);
-            if (session == null) {
-                ChatConsole.error("unknown or disconnected user: " + remotePeerId);
-                return;
+            if (session != null) {
+                try {
+                    session.sendText("(private) " + text);
+                    ChatConsole.notice("private message sent to " + remotePeerId);
+                    return;
+                } catch (Exception e) {
+                    sessionsByPeer.remove(remotePeerId);
+                    ChatConsole.notice("direct private message to " + remotePeerId
+                            + " failed; retrying by relay: " + userMessage(e));
+                }
             }
-            try {
-                session.sendText("(private) " + text);
-                ChatConsole.notice("private message sent to " + remotePeerId);
-            } catch (Exception e) {
-                sessionsByPeer.remove(remotePeerId);
-                ChatConsole.error("private message to " + remotePeerId + " failed: " + userMessage(e));
-            }
+            signal.sendToServer("room-private-relay", Map.of("to", remotePeerId, "message", text));
+            ChatConsole.notice("private message relayed to " + remotePeerId);
         }
 
         private void offerFile(Path path, String remotePeerId) throws Exception {
@@ -744,6 +756,20 @@ public class P2pChatCli {
     private static String userMessage(Exception e) {
         String message = e.getMessage();
         return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
+    }
+
+    private static String signalErrorText(SignalMessage message) {
+        JsonNode payload = message.payload();
+        if (payload == null || payload.isNull()) {
+            return "server rejected signal";
+        }
+        if (payload.has("message")) {
+            return payload.path("message").asText("server rejected signal");
+        }
+        if (payload.isTextual()) {
+            return payload.asText();
+        }
+        return payload.toString();
     }
 
     private record PrivateMessage(String peerId, String message) {

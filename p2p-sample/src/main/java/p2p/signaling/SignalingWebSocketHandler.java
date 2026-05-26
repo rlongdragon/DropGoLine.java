@@ -53,6 +53,10 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
             relayRoomMessage(session, signal);
             return;
         }
+        if ("room-private-relay".equals(signal.type())) {
+            relayPrivateRoomMessage(session, signal);
+            return;
+        }
 
         if (signal.to() == null || signal.to().isBlank()) {
             sendError(session, "Missing target peer");
@@ -156,6 +160,41 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    private void relayPrivateRoomMessage(WebSocketSession session, SignalMessage signal) throws Exception {
+        String from = peerRegistry.peerId(session).orElse(signal.from());
+        String roomId = roomRegistry.roomOf(from);
+        if (roomId == null) {
+            sendError(session, "Peer is not in a room");
+            return;
+        }
+
+        JsonNode payloadNode = signal.payload();
+        String targetPeerId = payloadNode == null ? "" : payloadNode.path("to").asText("");
+        if (targetPeerId.isBlank()) {
+            sendError(session, "Missing private message target");
+            return;
+        }
+        if (!roomRegistry.peersInSameRoom(from).contains(targetPeerId)) {
+            sendError(session, "Peer is not in your room: " + targetPeerId);
+            return;
+        }
+
+        Optional<WebSocketSession> target = peerRegistry.find(targetPeerId);
+        if (target.isEmpty()) {
+            roomRegistry.removePeer(targetPeerId);
+            sendError(session, "Target peer is offline: " + targetPeerId);
+            return;
+        }
+
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("roomId", roomId);
+        JsonNode message = payloadNode != null && payloadNode.has("message")
+                ? payloadNode.get("message")
+                : objectMapper.nullNode();
+        payload.set("message", message);
+        sendSignal(target.get(), "room-private-relay", payload, from);
+    }
+
     private String roomId(SignalMessage signal) {
         if (signal.payload() == null || signal.payload().get("roomId") == null) {
             return "";
@@ -201,8 +240,7 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
 
     private void sendError(WebSocketSession session, String error) throws Exception {
         ObjectNode payload = objectMapper.createObjectNode();
-        payload.put("type", "error");
         payload.put("message", error);
-        peerRegistry.send(session, objectMapper.writeValueAsString(payload));
+        sendSignal(session, "error", payload);
     }
 }

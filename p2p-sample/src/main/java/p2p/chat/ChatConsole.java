@@ -47,6 +47,10 @@ final class ChatConsole {
         event(YELLOW + username + " >>> " + RESET + message + DIM + " (relay)" + RESET);
     }
 
+    static synchronized void privateRelay(String username, String message) {
+        event(PURPLE + username + " >>> " + RESET + message + DIM + " (private relay)" + RESET);
+    }
+
     static synchronized void file(String message) {
         event(YELLOW + "[file] " + RESET + message);
     }
