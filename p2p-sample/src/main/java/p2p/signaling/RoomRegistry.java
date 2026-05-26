@@ -68,22 +68,31 @@ public class RoomRegistry {
         return roomByPeerId.get(peerId);
     }
 
-    public void removePeer(String peerId) {
+    public Removal removePeer(String peerId) {
         String roomId = roomByPeerId.remove(peerId);
         if (roomId == null) {
-            return;
+            return Removal.empty(peerId);
         }
         List<String> peers = peersByRoomId.get(roomId);
         if (peers == null) {
-            return;
+            return new Removal(peerId, roomId, List.of());
         }
         boolean empty;
+        List<String> remainingPeers;
         synchronized (peers) {
             peers.remove(peerId);
             empty = peers.isEmpty();
+            remainingPeers = List.copyOf(peers);
         }
         if (empty) {
             peersByRoomId.remove(roomId);
+        }
+        return new Removal(peerId, roomId, remainingPeers);
+    }
+
+    public record Removal(String peerId, String roomId, List<String> remainingPeers) {
+        public static Removal empty(String peerId) {
+            return new Removal(peerId, null, List.of());
         }
     }
 

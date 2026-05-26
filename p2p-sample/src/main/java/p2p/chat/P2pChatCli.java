@@ -44,7 +44,6 @@ public class P2pChatCli {
     public static void main(String[] args) throws Exception {
         quietLibraryLogs();
         P2pChatCli cli = new P2pChatCli();
-        int exitCode = 0;
         try {
             if (args.length == 0) {
                 cli.runInteractive();
@@ -83,10 +82,7 @@ public class P2pChatCli {
                 default -> usage();
             }
         } catch (Exception e) {
-            exitCode = 1;
             ChatConsole.error(userMessage(e));
-        } finally {
-            System.exit(exitCode);
         }
     }
 
@@ -274,20 +270,26 @@ public class P2pChatCli {
     }
 
     private void runDirectConsole(ChatSession chat) throws Exception {
-        try (Scanner scanner = new Scanner(System.in)) {
+        try (Scanner scanner = new Scanner(System.in);
+             ChatInput input = new ChatInput(scanner)) {
             while (true) {
                 ChatConsole.prompt();
-                if (!scanner.hasNextLine()) {
+                String line = input.readLine();
+                if (line == null) {
                     ChatConsole.acceptedInput();
-                    return;
+                    waitForConsoleInput();
+                    continue;
                 }
-                String line = scanner.nextLine();
                 ChatConsole.acceptedInput();
                 if (line.equals("/quit")) {
                     chat.close();
                     return;
                 }
                 try {
+                    if (line.equals("/help")) {
+                        ChatConsole.help();
+                        continue;
+                    }
                     if (line.equals("/file") || line.startsWith("/file ")) {
                         String path = argument(line, "/file");
                         if (path.isBlank()) {
@@ -307,6 +309,10 @@ public class P2pChatCli {
                         continue;
                     }
                     if (line.isBlank()) {
+                        continue;
+                    }
+                    if (line.startsWith("/")) {
+                        ChatConsole.error("unknown command: " + firstToken(line) + ". Type /help");
                         continue;
                     }
                     chat.sendText(line);
@@ -341,20 +347,25 @@ public class P2pChatCli {
         }
 
         private void runConsole(Scanner scanner) throws Exception {
-            try {
+            try (ChatInput input = new ChatInput(scanner)) {
                 while (running) {
                     ChatConsole.prompt();
-                    if (!scanner.hasNextLine()) {
+                    String line = input.readLine();
+                    if (line == null) {
                         ChatConsole.acceptedInput();
-                        return;
+                        waitForConsoleInput();
+                        continue;
                     }
-                    String line = scanner.nextLine();
                     ChatConsole.acceptedInput();
                     if (line.equals("/quit")) {
                         close();
                         return;
                     }
                     try {
+                        if (line.equals("/help")) {
+                            ChatConsole.help();
+                            continue;
+                        }
                         if (line.equals("/file") || line.startsWith("/file ")) {
                             FileCommand command = parseFileCommand(argument(line, "/file"));
                             if (command == null) {
@@ -385,6 +396,10 @@ public class P2pChatCli {
                         if (line.isBlank()) {
                             continue;
                         }
+                        if (line.startsWith("/")) {
+                            ChatConsole.error("unknown command: " + firstToken(line) + ". Type /help");
+                            continue;
+                        }
                         sendText(line);
                     } catch (Exception e) {
                         ChatConsole.error(userMessage(e));
@@ -407,6 +422,13 @@ public class P2pChatCli {
                             String joinedPeer = message.payload().path("peerId").asText();
                             if (!joinedPeer.isBlank()) {
                                 ChatConsole.system(joinedPeer + " joined the room; waiting for direct offer");
+                            }
+                        }
+                        case "room-peer-left" -> {
+                            String leftPeer = message.payload().path("peerId").asText();
+                            if (!leftPeer.isBlank()) {
+                                removePeer(leftPeer);
+                                ChatConsole.system(leftPeer + " left the room");
                             }
                         }
                         case "chat-offer" -> acceptPeer(message);
@@ -451,7 +473,8 @@ public class P2pChatCli {
                             iceConnection.remoteAddress(),
                             iceConnection.remotePort());
                          QuicChannel.TransferStream stream = channel.openStream()) {
-                        ChatSession chat = new ChatSession(peerId, remotePeerId, stream.input(), stream.output(), downloadDirectory);
+                        ChatSession chat = new ChatSession(peerId, remotePeerId, stream.input(), stream.output(),
+                                downloadDirectory, () -> sessionsByPeer.remove(remotePeerId));
                         chat.sendHello();
                         chat.startReader();
                         sessionsByPeer.put(remotePeerId, chat);
@@ -493,7 +516,8 @@ public class P2pChatCli {
                     try (InputStream cert = QuicCertificateFiles.certificate();
                          InputStream key = QuicCertificateFiles.privateKey()) {
                         quic.accept(iceConnection.socket(), cert, key, (input, output) -> {
-                            ChatSession chat = new ChatSession(peerId, remotePeerId, input, output, downloadDirectory);
+                            ChatSession chat = new ChatSession(peerId, remotePeerId, input, output, downloadDirectory,
+                                    () -> sessionsByPeer.remove(remotePeerId));
                             chat.expectHello();
                             chat.startReader();
                             chatRef.set(chat);
@@ -545,6 +569,15 @@ public class P2pChatCli {
             if (!content.isBlank()) {
                 ChatConsole.relay(sender, content);
             }
+        }
+
+        private void removePeer(String remotePeerId) {
+            ChatSession session = sessionsByPeer.remove(remotePeerId);
+            if (session != null) {
+                session.close();
+            }
+            pendingAnswers.remove(remotePeerId);
+            connectingPeers.remove(remotePeerId);
         }
 
         private void sendText(String text) throws Exception {
@@ -678,6 +711,16 @@ public class P2pChatCli {
 
     private static String argument(String line, String command) {
         return line.length() <= command.length() ? "" : line.substring(command.length()).trim();
+    }
+
+    private static String firstToken(String line) {
+        String trimmed = line.trim();
+        int space = trimmed.indexOf(' ');
+        return space < 0 ? trimmed : trimmed.substring(0, space);
+    }
+
+    private static void waitForConsoleInput() throws InterruptedException {
+        TimeUnit.MILLISECONDS.sleep(200);
     }
 
     private static PrivateMessage parsePrivateMessage(String value) {

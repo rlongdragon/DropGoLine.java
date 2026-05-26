@@ -78,7 +78,10 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        peerRegistry.peerId(session).ifPresent(roomRegistry::removePeer);
+        peerRegistry.peerId(session).ifPresent(peerId -> {
+            RoomRegistry.Removal removal = roomRegistry.removePeer(peerId);
+            notifyPeerLeft(removal);
+        });
         peerRegistry.unregister(session);
     }
 
@@ -167,6 +170,25 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
     private void sendSignal(WebSocketSession session, String type, ObjectNode payload, String from) throws Exception {
         SignalMessage signal = new SignalMessage(type, from, peerRegistry.peerId(session).orElse(null), payload);
         peerRegistry.send(session, objectMapper.writeValueAsString(signal));
+    }
+
+    private void notifyPeerLeft(RoomRegistry.Removal removal) {
+        if (removal.roomId() == null) {
+            return;
+        }
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("roomId", removal.roomId());
+        payload.put("peerId", removal.peerId());
+        for (String remainingPeer : removal.remainingPeers()) {
+            peerRegistry.find(remainingPeer).ifPresent(session -> {
+                try {
+                    sendSignal(session, "room-peer-left", payload);
+                } catch (Exception ignored) {
+                    peerRegistry.unregister(session);
+                    roomRegistry.removePeer(remainingPeer);
+                }
+            });
+        }
     }
 
     private Optional<String> peerIdFrom(URI uri) {

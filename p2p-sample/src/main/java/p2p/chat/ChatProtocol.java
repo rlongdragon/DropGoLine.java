@@ -10,6 +10,7 @@ final class ChatProtocol {
     static final int TYPE_FILE_CHUNK = 5;
     static final int TYPE_FILE_END = 6;
     static final int TYPE_NOTICE = 7;
+    static final int TYPE_KEEPALIVE = 8;
 
     private ChatProtocol() {
     }

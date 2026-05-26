@@ -13,9 +13,11 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ChatSession implements AutoCloseable {
+    private static final long KEEPALIVE_SECONDS = 10;
     private final String localPeerId;
     private final String remotePeerId;
     private final Path downloadDirectory;
@@ -23,6 +25,7 @@ public class ChatSession implements AutoCloseable {
     private final DataOutputStream output;
     private final CountDownLatch closed = new CountDownLatch(1);
     private final AtomicBoolean closedOnce = new AtomicBoolean();
+    private final Runnable onClose;
     private final Map<String, Path> localOffers = new ConcurrentHashMap<>();
     private final Map<String, RemoteOffer> remoteOffers = new ConcurrentHashMap<>();
     private volatile boolean running = true;
@@ -33,17 +36,28 @@ public class ChatSession implements AutoCloseable {
 
     public ChatSession(String localPeerId, String remotePeerId, InputStream input, OutputStream output,
                        Path downloadDirectory) {
+        this(localPeerId, remotePeerId, input, output, downloadDirectory, () -> {
+        });
+    }
+
+    public ChatSession(String localPeerId, String remotePeerId, InputStream input, OutputStream output,
+                       Path downloadDirectory, Runnable onClose) {
         this.localPeerId = localPeerId;
         this.remotePeerId = remotePeerId == null || remotePeerId.isBlank() ? "peer" : remotePeerId;
         this.input = new DataInputStream(input);
         this.output = new DataOutputStream(output);
         this.downloadDirectory = downloadDirectory;
+        this.onClose = onClose == null ? () -> {
+        } : onClose;
     }
 
     public void startReader() {
         Thread reader = new Thread(this::readLoop, "chat-reader-" + localPeerId);
         reader.setDaemon(true);
         reader.start();
+        Thread keepalive = new Thread(this::keepaliveLoop, "chat-keepalive-" + localPeerId + "-" + remotePeerId);
+        keepalive.setDaemon(true);
+        keepalive.start();
     }
 
     public void sendHello() throws IOException {
@@ -112,6 +126,7 @@ public class ChatSession implements AutoCloseable {
         closeQuietly(input);
         closeQuietly(output);
         closed.countDown();
+        onClose.run();
     }
 
     private void readLoop() {
@@ -124,6 +139,8 @@ public class ChatSession implements AutoCloseable {
                     case ChatProtocol.TYPE_FILE_REQUEST -> sendRequestedFile(input.readUTF());
                     case ChatProtocol.TYPE_FILE_START -> receiveFile();
                     case ChatProtocol.TYPE_NOTICE -> ChatConsole.notice(input.readUTF());
+                    case ChatProtocol.TYPE_KEEPALIVE -> {
+                    }
                     default -> throw new IOException("unknown chat frame type: " + type);
                 }
             }
@@ -143,6 +160,25 @@ public class ChatSession implements AutoCloseable {
             }
         } finally {
             close();
+        }
+    }
+
+    private void keepaliveLoop() {
+        while (running) {
+            try {
+                if (closed.await(KEEPALIVE_SECONDS, TimeUnit.SECONDS)) {
+                    return;
+                }
+                sendKeepalive();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (Exception e) {
+                if (running) {
+                    close();
+                }
+                return;
+            }
         }
     }
 
@@ -240,6 +276,13 @@ public class ChatSession implements AutoCloseable {
         synchronized (output) {
             output.writeInt(ChatProtocol.TYPE_NOTICE);
             output.writeUTF(message);
+            output.flush();
+        }
+    }
+
+    private void sendKeepalive() throws IOException {
+        synchronized (output) {
+            output.writeInt(ChatProtocol.TYPE_KEEPALIVE);
             output.flush();
         }
     }

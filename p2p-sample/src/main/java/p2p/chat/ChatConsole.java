@@ -10,6 +10,7 @@ final class ChatConsole {
     private static final String RED = color("\033[31m");
     private static final String DIM = color("\033[2m");
     private static boolean promptVisible;
+    private static String promptMode = "message";
 
     private ChatConsole() {
     }
@@ -18,9 +19,23 @@ final class ChatConsole {
         if (promptVisible) {
             return;
         }
-        System.out.print(GREEN + "message <<< " + RESET);
+        System.out.print(GREEN + promptMode + " <<< " + RESET);
         System.out.flush();
         promptVisible = true;
+    }
+
+    static synchronized void commandMode() {
+        promptMode = "command";
+        if (promptVisible) {
+            redrawPrompt();
+        }
+    }
+
+    static synchronized void messageMode() {
+        promptMode = "message";
+        if (promptVisible) {
+            redrawPrompt();
+        }
     }
 
     static synchronized void incoming(String username, String message) {
@@ -47,8 +62,18 @@ final class ChatConsole {
         event(YELLOW + "[notice] " + RESET + message);
     }
 
+    static synchronized void help() {
+        event(YELLOW + "[help] " + RESET + "commands:");
+        event("  /help                 show commands");
+        event("  /msg <user> <text>    send private message");
+        event("  /file <path> [user]   offer file to everyone or one user");
+        event("  /save <offer-id>      download offered file");
+        event("  /quit                 leave chat");
+    }
+
     static synchronized void acceptedInput() {
         promptVisible = false;
+        promptMode = "message";
     }
 
     private static void event(String message) {
@@ -57,12 +82,21 @@ final class ChatConsole {
         }
         System.out.println(message);
         if (promptVisible) {
-            System.out.print(GREEN + "message <<< " + RESET);
-            System.out.flush();
+            printPrompt();
         }
     }
 
     private static String color(String value) {
         return COLOR ? value : "";
+    }
+
+    private static void redrawPrompt() {
+        System.out.print(CLEAR_LINE);
+        printPrompt();
+    }
+
+    private static void printPrompt() {
+        System.out.print(GREEN + promptMode + " <<< " + RESET);
+        System.out.flush();
     }
 }
