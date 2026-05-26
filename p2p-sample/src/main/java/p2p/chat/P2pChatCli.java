@@ -277,8 +277,7 @@ public class P2pChatCli {
                 String line = input.readLine();
                 if (line == null) {
                     ChatConsole.acceptedInput();
-                    waitForConsoleInput();
-                    continue;
+                    return;
                 }
                 ChatConsole.acceptedInput();
                 if (line.equals("/quit")) {
@@ -353,8 +352,7 @@ public class P2pChatCli {
                     String line = input.readLine();
                     if (line == null) {
                         ChatConsole.acceptedInput();
-                        waitForConsoleInput();
-                        continue;
+                        return;
                     }
                     ChatConsole.acceptedInput();
                     if (line.equals("/quit")) {

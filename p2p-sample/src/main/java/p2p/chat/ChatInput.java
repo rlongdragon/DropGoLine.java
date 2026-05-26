@@ -13,7 +13,7 @@ final class ChatInput implements AutoCloseable {
     ChatInput(Scanner fallback) {
         this.fallback = fallback;
         this.savedTtyState = readTtyState();
-        this.rawMode = savedTtyState != null && setTtyMode("raw -echo min 1 time 0");
+        this.rawMode = System.console() != null && savedTtyState != null && setTtyMode("raw -echo min 1 time 0");
     }
 
     String readLine() throws IOException {
