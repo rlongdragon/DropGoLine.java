@@ -57,6 +57,10 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
             relayPrivateRoomMessage(session, signal);
             return;
         }
+        if (signal.type() != null && signal.type().startsWith("room-file-")) {
+            relayRoomFileMessage(session, signal);
+            return;
+        }
 
         if (signal.to() == null || signal.to().isBlank()) {
             sendError(session, "Missing target peer");
@@ -193,6 +197,51 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
                 : objectMapper.nullNode();
         payload.set("message", message);
         sendSignal(target.get(), "room-private-relay", payload, from);
+    }
+
+    private void relayRoomFileMessage(WebSocketSession session, SignalMessage signal) throws Exception {
+        String from = peerRegistry.peerId(session).orElse(signal.from());
+        String roomId = roomRegistry.roomOf(from);
+        if (roomId == null) {
+            sendError(session, "Peer is not in a room");
+            return;
+        }
+
+        JsonNode payloadNode = signal.payload();
+        String targetPeerId = payloadNode == null ? "" : payloadNode.path("to").asText("");
+        if (targetPeerId.isBlank()) {
+            if (!"room-file-offer".equals(signal.type())) {
+                sendError(session, "Missing file relay target");
+                return;
+            }
+            for (String peerId : roomRegistry.peersInSameRoom(from)) {
+                forwardRoomFileMessage(peerId, signal, from, roomId, session);
+            }
+            return;
+        }
+
+        if (!roomRegistry.peersInSameRoom(from).contains(targetPeerId)) {
+            sendError(session, "Peer is not in your room: " + targetPeerId);
+            return;
+        }
+        forwardRoomFileMessage(targetPeerId, signal, from, roomId, session);
+    }
+
+    private void forwardRoomFileMessage(String targetPeerId, SignalMessage signal, String from, String roomId,
+                                        WebSocketSession sourceSession) throws Exception {
+        Optional<WebSocketSession> target = peerRegistry.find(targetPeerId);
+        if (target.isEmpty()) {
+            roomRegistry.removePeer(targetPeerId);
+            sendError(sourceSession, "Target peer is offline: " + targetPeerId);
+            return;
+        }
+
+        ObjectNode payload = signal.payload() == null || signal.payload().isNull()
+                ? objectMapper.createObjectNode()
+                : signal.payload().deepCopy();
+        payload.put("roomId", roomId);
+        payload.remove("to");
+        sendSignal(target.get(), signal.type(), payload, from);
     }
 
     private String roomId(SignalMessage signal) {

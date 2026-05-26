@@ -1,12 +1,16 @@
 package p2p.chat;
 
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -329,8 +333,12 @@ public class P2pChatCli {
         private final ExecutorService executor = Executors.newCachedThreadPool();
         private final Map<String, ChatSession> sessionsByPeer = new ConcurrentHashMap<>();
         private final Map<String, CompletableFuture<IceDescription>> pendingAnswers = new ConcurrentHashMap<>();
+        private final Map<String, Path> relayLocalOffers = new ConcurrentHashMap<>();
+        private final Map<String, RelayRemoteOffer> relayRemoteOffers = new ConcurrentHashMap<>();
+        private final Map<String, RelayIncomingFile> relayIncomingFiles = new ConcurrentHashMap<>();
         private final Set<String> connectingPeers = ConcurrentHashMap.newKeySet();
         private volatile boolean running = true;
+        private static final int RELAY_FILE_CHUNK_SIZE = 3 * 1024;
 
         private RoomChatApp(PeerSignalClient signal, String peerId, Path downloadDirectory) {
             this.signal = signal;
@@ -433,6 +441,13 @@ public class P2pChatCli {
                         case "chat-answer" -> completeAnswer(message);
                         case "room-relay" -> receiveRelay(message);
                         case "room-private-relay" -> receivePrivateRelay(message);
+                        case "room-file-offer" -> receiveRelayFileOffer(message);
+                        case "room-file-request" -> receiveRelayFileRequest(message);
+                        case "room-file-start" -> receiveRelayFileStart(message);
+                        case "room-file-chunk" -> receiveRelayFileChunk(message);
+                        case "room-file-end" -> receiveRelayFileEnd(message);
+                        case "room-file-notice" -> ChatConsole.file(message.from() + ": "
+                                + message.payload().path("message").asText(""));
                         case "error" -> ChatConsole.error("signal: " + signalErrorText(message));
                         default -> {
                         }
@@ -579,6 +594,101 @@ public class P2pChatCli {
             }
         }
 
+        private void receiveRelayFileOffer(SignalMessage message) {
+            JsonNode payload = message.payload();
+            String id = payload.path("id").asText("");
+            String fileName = sanitizeFileName(payload.path("fileName").asText(""));
+            long size = payload.path("size").asLong(-1);
+            String sender = message.from();
+            if (id.isBlank() || fileName.isBlank() || size < 0 || sender == null || sender.isBlank()) {
+                ChatConsole.file("ignored invalid file offer from " + sender);
+                return;
+            }
+            relayRemoteOffers.put(id, new RelayRemoteOffer(sender, fileName, size));
+            ChatConsole.file(sender + " offered " + id + " " + fileName + " (" + size + " bytes, relay)");
+            ChatConsole.file("type /save " + id + " to download");
+        }
+
+        private void receiveRelayFileRequest(SignalMessage message) {
+            String id = message.payload().path("id").asText("");
+            String requester = message.from();
+            if (id.isBlank() || requester == null || requester.isBlank()) {
+                return;
+            }
+            Path path = relayLocalOffers.get(id);
+            if (path == null) {
+                try {
+                    sendRelayFileNotice(requester, "file offer not found: " + id);
+                } catch (Exception e) {
+                    ChatConsole.error("file notice to " + requester + " failed: " + userMessage(e));
+                }
+                return;
+            }
+            executor.submit(() -> {
+                try {
+                    sendRelayFile(requester, id, path);
+                } catch (Exception e) {
+                    try {
+                        sendRelayFileNotice(requester, "file relay failed for " + id + ": " + userMessage(e));
+                    } catch (Exception ignored) {
+                    }
+                    ChatConsole.error("file relay to " + requester + " failed: " + userMessage(e));
+                }
+            });
+        }
+
+        private void receiveRelayFileStart(SignalMessage message) throws Exception {
+            JsonNode payload = message.payload();
+            String id = payload.path("id").asText("");
+            String fileName = sanitizeFileName(payload.path("fileName").asText(""));
+            long size = payload.path("size").asLong(-1);
+            if (id.isBlank() || fileName.isBlank() || size < 0) {
+                ChatConsole.file("ignored invalid file start from " + message.from());
+                return;
+            }
+            Files.createDirectories(downloadDirectory);
+            Path target = downloadDirectory.resolve(fileName);
+            RelayIncomingFile previous = relayIncomingFiles.remove(id);
+            if (previous != null) {
+                previous.close();
+            }
+            relayIncomingFiles.put(id, new RelayIncomingFile(message.from(), target, size,
+                    Files.newOutputStream(target)));
+            ChatConsole.file("receiving " + fileName + " from " + message.from() + " by relay");
+        }
+
+        private void receiveRelayFileChunk(SignalMessage message) throws Exception {
+            JsonNode payload = message.payload();
+            String id = payload.path("id").asText("");
+            RelayIncomingFile incoming = relayIncomingFiles.get(id);
+            if (incoming == null || !incoming.sender().equals(message.from())) {
+                ChatConsole.file("ignored unexpected file chunk " + id + " from " + message.from());
+                return;
+            }
+            byte[] chunk = Base64.getDecoder().decode(payload.path("data").asText(""));
+            if (chunk.length > RELAY_FILE_CHUNK_SIZE) {
+                throw new IllegalStateException("relay file chunk too large: " + chunk.length);
+            }
+            incoming.write(chunk);
+        }
+
+        private void receiveRelayFileEnd(SignalMessage message) throws Exception {
+            String id = message.payload().path("id").asText("");
+            RelayIncomingFile incoming = relayIncomingFiles.remove(id);
+            if (incoming == null || !incoming.sender().equals(message.from())) {
+                ChatConsole.file("ignored unexpected file end " + id + " from " + message.from());
+                return;
+            }
+            incoming.close();
+            if (incoming.received() != incoming.size()) {
+                ChatConsole.error("file size mismatch for " + id + ": expected "
+                        + incoming.size() + ", got " + incoming.received());
+                return;
+            }
+            relayRemoteOffers.remove(id);
+            ChatConsole.file("saved " + incoming.target());
+        }
+
         private void removePeer(String remotePeerId) {
             ChatSession session = sessionsByPeer.remove(remotePeerId);
             if (session != null) {
@@ -618,38 +728,37 @@ public class P2pChatCli {
         }
 
         private void offerFile(Path path, String remotePeerId) throws Exception {
-            if (remotePeerId != null && !remotePeerId.isBlank()) {
-                offerFileTo(path, remotePeerId);
+            if (!Files.isRegularFile(path)) {
+                ChatConsole.error("file does not exist: " + path);
                 return;
             }
-            if (sessionsByPeer.isEmpty()) {
-                ChatConsole.file("no direct peers connected yet");
-                return;
-            }
-            for (Map.Entry<String, ChatSession> entry : sessionsByPeer.entrySet()) {
-                offerFileTo(path, entry.getKey());
-            }
+            offerRelayFile(path, remotePeerId);
         }
 
-        private void offerFileTo(Path path, String remotePeerId) throws Exception {
-            ChatSession session = sessionsByPeer.get(remotePeerId);
-            if (session == null) {
-                ChatConsole.error("unknown or disconnected user: " + remotePeerId);
-                return;
-            }
-            try {
-                session.offerFile(path);
-            } catch (Exception e) {
-                if (!userMessage(e).startsWith("file does not exist: ")) {
-                    sessionsByPeer.remove(remotePeerId);
-                }
-                ChatConsole.error("file offer to " + remotePeerId + " failed: " + userMessage(e));
+        private void offerRelayFile(Path path, String remotePeerId) throws Exception {
+            String id = UUID.randomUUID().toString().substring(0, 8);
+            relayLocalOffers.put(id, path);
+            Map<String, Object> payload = remotePeerId == null || remotePeerId.isBlank()
+                    ? Map.of("id", id, "fileName", path.getFileName().toString(), "size", Files.size(path))
+                    : Map.of("id", id, "fileName", path.getFileName().toString(), "size", Files.size(path),
+                            "to", remotePeerId);
+            signal.sendToServer("room-file-offer", payload);
+            if (remotePeerId == null || remotePeerId.isBlank()) {
+                ChatConsole.file("offered " + path + " as " + id + " by relay");
+            } else {
+                ChatConsole.file("offered " + path + " as " + id + " to " + remotePeerId + " by relay");
             }
         }
 
         private void requestFile(String id) throws Exception {
+            RelayRemoteOffer relayOffer = relayRemoteOffers.get(id);
+            if (relayOffer != null) {
+                signal.sendToServer("room-file-request", Map.of("to", relayOffer.sender(), "id", id));
+                ChatConsole.file("requested " + id + " (" + relayOffer.fileName() + ") by relay");
+                return;
+            }
             if (sessionsByPeer.isEmpty()) {
-                ChatConsole.file("no direct peers connected yet");
+                ChatConsole.file("unknown file offer: " + id);
                 return;
             }
             for (Map.Entry<String, ChatSession> entry : sessionsByPeer.entrySet()) {
@@ -662,12 +771,91 @@ public class P2pChatCli {
             }
         }
 
+        private void sendRelayFile(String remotePeerId, String id, Path path) throws Exception {
+            long size = Files.size(path);
+            signal.sendToServer("room-file-start", Map.of(
+                    "to", remotePeerId,
+                    "id", id,
+                    "fileName", path.getFileName().toString(),
+                    "size", size));
+
+            byte[] buffer = new byte[RELAY_FILE_CHUNK_SIZE];
+            try (InputStream fileInput = Files.newInputStream(path)) {
+                int read;
+                while ((read = fileInput.read(buffer)) >= 0) {
+                    byte[] chunk = read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read);
+                    signal.sendToServer("room-file-chunk", Map.of(
+                            "to", remotePeerId,
+                            "id", id,
+                            "data", Base64.getEncoder().encodeToString(chunk)));
+                }
+            }
+
+            signal.sendToServer("room-file-end", Map.of("to", remotePeerId, "id", id));
+            ChatConsole.file("sent " + path + " for " + id + " to " + remotePeerId + " by relay");
+        }
+
+        private void sendRelayFileNotice(String remotePeerId, String message) throws Exception {
+            signal.sendToServer("room-file-notice", Map.of("to", remotePeerId, "message", message));
+        }
+
         private void close() {
             running = false;
             for (ChatSession session : sessionsByPeer.values()) {
                 session.close();
             }
             executor.shutdownNow();
+        }
+    }
+
+    private static String sanitizeFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "";
+        }
+        return Path.of(fileName).getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private record RelayRemoteOffer(String sender, String fileName, long size) {
+    }
+
+    private static final class RelayIncomingFile implements AutoCloseable {
+        private final String sender;
+        private final Path target;
+        private final long size;
+        private final OutputStream output;
+        private long received;
+
+        private RelayIncomingFile(String sender, Path target, long size, OutputStream output) {
+            this.sender = sender;
+            this.target = target;
+            this.size = size;
+            this.output = output;
+        }
+
+        private String sender() {
+            return sender;
+        }
+
+        private Path target() {
+            return target;
+        }
+
+        private long size() {
+            return size;
+        }
+
+        private long received() {
+            return received;
+        }
+
+        private void write(byte[] chunk) throws java.io.IOException {
+            output.write(chunk);
+            received += chunk.length;
+        }
+
+        @Override
+        public void close() throws java.io.IOException {
+            output.close();
         }
     }
 
