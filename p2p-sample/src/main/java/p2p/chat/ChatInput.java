@@ -1,19 +1,23 @@
 package p2p.chat;
 
 import java.io.BufferedReader;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.Scanner;
 
 final class ChatInput implements AutoCloseable {
     private final Scanner fallback;
     private final String savedTtyState;
+    private final InputStream input;
     private final boolean rawMode;
 
     ChatInput(Scanner fallback) {
         this.fallback = fallback;
         this.savedTtyState = readTtyState();
-        this.rawMode = System.console() != null && savedTtyState != null && setTtyMode("raw -echo min 1 time 0");
+        this.input = openTtyInput();
+        this.rawMode = input != null && savedTtyState != null && setTtyMode("raw -echo min 1 time 0");
     }
 
     String readLine() throws IOException {
@@ -24,7 +28,7 @@ final class ChatInput implements AutoCloseable {
         StringBuilder line = new StringBuilder();
         boolean commandMode = false;
         while (true) {
-            int read = System.in.read();
+            int read = input.read();
             if (read < 0) {
                 return null;
             }
@@ -65,6 +69,20 @@ final class ChatInput implements AutoCloseable {
     public void close() {
         if (rawMode) {
             setTtyMode(savedTtyState);
+        }
+        if (input != null) {
+            try {
+                input.close();
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
+    private static InputStream openTtyInput() {
+        try {
+            return new FileInputStream("/dev/tty");
+        } catch (IOException ignored) {
+            return null;
         }
     }
 

@@ -6,6 +6,7 @@ final class ChatConsole {
     private static final String RESET = color("\033[0m");
     private static final String CYAN = color("\033[36m");
     private static final String GREEN = color("\033[32m");
+    private static final String PURPLE = color("\033[35m");
     private static final String YELLOW = color("\033[33m");
     private static final String RED = color("\033[31m");
     private static final String DIM = color("\033[2m");
@@ -96,7 +97,11 @@ final class ChatConsole {
     }
 
     private static void printPrompt() {
-        System.out.print(GREEN + promptMode + " <<< " + RESET);
+        if ("command".equals(promptMode)) {
+            System.out.print(PURPLE + "command === " + RESET);
+        } else {
+            System.out.print(GREEN + "message <<< " + RESET);
+        }
         System.out.flush();
     }
 }
