@@ -17,12 +17,12 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Component
 public class SignalingWebSocketHandler extends TextWebSocketHandler {
     private final PeerRegistry peerRegistry;
-    private final RoomRegistry roomRegistry;
+    private final GroupRegistry groupRegistry;
     private final ObjectMapper objectMapper;
 
-    public SignalingWebSocketHandler(PeerRegistry peerRegistry, RoomRegistry roomRegistry, ObjectMapper objectMapper) {
+    public SignalingWebSocketHandler(PeerRegistry peerRegistry, GroupRegistry groupRegistry, ObjectMapper objectMapper) {
         this.peerRegistry = peerRegistry;
-        this.roomRegistry = roomRegistry;
+        this.groupRegistry = groupRegistry;
         this.objectMapper = objectMapper;
     }
 
@@ -41,24 +41,25 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         SignalMessage signal = objectMapper.readValue(message.getPayload(), SignalMessage.class);
-        if ("create-room".equals(signal.type())) {
-            createRoom(session, signal);
+        if ("create-group".equals(signal.type()) || "create-room".equals(signal.type())) {
+            createGroup(session, signal);
             return;
         }
-        if ("join-room".equals(signal.type())) {
-            joinRoom(session, signal);
+        if ("join-group".equals(signal.type()) || "join-room".equals(signal.type())) {
+            joinGroup(session, signal);
             return;
         }
-        if ("room-relay".equals(signal.type())) {
-            relayRoomMessage(session, signal);
+        if ("group-relay".equals(signal.type()) || "room-relay".equals(signal.type())) {
+            relayGroupMessage(session, signal);
             return;
         }
-        if ("room-private-relay".equals(signal.type())) {
-            relayPrivateRoomMessage(session, signal);
+        if ("group-private-relay".equals(signal.type()) || "room-private-relay".equals(signal.type())) {
+            relayPrivateGroupMessage(session, signal);
             return;
         }
-        if (signal.type() != null && signal.type().startsWith("room-file-")) {
-            relayRoomFileMessage(session, signal);
+        if (signal.type() != null
+                && (signal.type().startsWith("group-file-") || signal.type().startsWith("room-file-"))) {
+            relayGroupFileMessage(session, signal);
             return;
         }
 
@@ -87,88 +88,92 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         peerRegistry.peerId(session).ifPresent(peerId -> {
-            RoomRegistry.Removal removal = roomRegistry.removePeer(peerId);
+            GroupRegistry.Removal removal = groupRegistry.removePeer(peerId);
             notifyPeerLeft(removal);
         });
         peerRegistry.unregister(session);
     }
 
-    private void createRoom(WebSocketSession session, SignalMessage signal) throws Exception {
-        String requestedRoomId = roomId(signal);
+    private void createGroup(WebSocketSession session, SignalMessage signal) throws Exception {
+        String requestedGroupId = groupId(signal);
         String peerId = peerRegistry.peerId(session).orElse(signal.from());
-        String roomId;
+        String groupId;
         try {
-            roomId = roomRegistry.create(requestedRoomId, peerId);
+            groupId = groupRegistry.create(requestedGroupId, peerId);
         } catch (IllegalArgumentException e) {
             sendError(session, e.getMessage());
             return;
         }
 
         ObjectNode payload = objectMapper.createObjectNode();
-        payload.put("roomId", roomId);
+        payload.put("groupId", groupId);
+        payload.put("roomId", groupId);
         payload.put("peerId", peerId);
-        sendSignal(session, "room-created", payload);
+        sendSignal(session, replyType(signal.type(), "group-created", "room-created"), payload);
     }
 
-    private void joinRoom(WebSocketSession session, SignalMessage signal) throws Exception {
-        String roomId = roomId(signal);
+    private void joinGroup(WebSocketSession session, SignalMessage signal) throws Exception {
+        String groupId = groupId(signal);
         String joinerPeerId = peerRegistry.peerId(session).orElse(signal.from());
         List<String> existingPeers;
         try {
-            existingPeers = roomRegistry.join(roomId, joinerPeerId);
+            existingPeers = groupRegistry.join(groupId, joinerPeerId);
         } catch (IllegalArgumentException e) {
             sendError(session, e.getMessage());
             return;
         }
 
         ObjectNode joinedPayload = objectMapper.createObjectNode();
-        joinedPayload.put("roomId", roomId);
+        joinedPayload.put("groupId", groupId);
+        joinedPayload.put("roomId", groupId);
         joinedPayload.putPOJO("peers", existingPeers);
-        sendSignal(session, "room-joined", joinedPayload);
+        sendSignal(session, replyType(signal.type(), "group-joined", "room-joined"), joinedPayload);
 
         for (String existingPeer : existingPeers) {
             Optional<WebSocketSession> target = peerRegistry.find(existingPeer);
             if (target.isEmpty()) {
-                roomRegistry.removePeer(existingPeer);
+                groupRegistry.removePeer(existingPeer);
                 continue;
             }
             ObjectNode peerJoinedPayload = objectMapper.createObjectNode();
-            peerJoinedPayload.put("roomId", roomId);
+            peerJoinedPayload.put("groupId", groupId);
+            peerJoinedPayload.put("roomId", groupId);
             peerJoinedPayload.put("peerId", joinerPeerId);
-            sendSignal(target.get(), "room-peer-joined", peerJoinedPayload);
+            sendSignal(target.get(), "group-peer-joined", peerJoinedPayload);
         }
     }
 
-    private void relayRoomMessage(WebSocketSession session, SignalMessage signal) throws Exception {
+    private void relayGroupMessage(WebSocketSession session, SignalMessage signal) throws Exception {
         String from = peerRegistry.peerId(session).orElse(signal.from());
-        String roomId = roomRegistry.roomOf(from);
-        if (roomId == null) {
-            sendError(session, "Peer is not in a room");
+        String groupId = groupRegistry.groupOf(from);
+        if (groupId == null) {
+            sendError(session, "Peer is not in a group");
             return;
         }
 
         ObjectNode payload = objectMapper.createObjectNode();
-        payload.put("roomId", roomId);
+        payload.put("groupId", groupId);
+        payload.put("roomId", groupId);
         JsonNode message = signal.payload() != null && signal.payload().has("message")
                 ? signal.payload().get("message")
                 : objectMapper.nullNode();
         payload.set("message", message);
 
-        for (String peerId : roomRegistry.peersInSameRoom(from)) {
+        for (String peerId : groupRegistry.peersInSameGroup(from)) {
             Optional<WebSocketSession> target = peerRegistry.find(peerId);
             if (target.isPresent()) {
-                sendSignal(target.get(), "room-relay", payload, from);
+                sendSignal(target.get(), signal.type().startsWith("room-") ? "room-relay" : "group-relay", payload, from);
             } else {
-                roomRegistry.removePeer(peerId);
+                groupRegistry.removePeer(peerId);
             }
         }
     }
 
-    private void relayPrivateRoomMessage(WebSocketSession session, SignalMessage signal) throws Exception {
+    private void relayPrivateGroupMessage(WebSocketSession session, SignalMessage signal) throws Exception {
         String from = peerRegistry.peerId(session).orElse(signal.from());
-        String roomId = roomRegistry.roomOf(from);
-        if (roomId == null) {
-            sendError(session, "Peer is not in a room");
+        String groupId = groupRegistry.groupOf(from);
+        if (groupId == null) {
+            sendError(session, "Peer is not in a group");
             return;
         }
 
@@ -178,60 +183,62 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
             sendError(session, "Missing private message target");
             return;
         }
-        if (!roomRegistry.peersInSameRoom(from).contains(targetPeerId)) {
-            sendError(session, "Peer is not in your room: " + targetPeerId);
+        if (!groupRegistry.peersInSameGroup(from).contains(targetPeerId)) {
+            sendError(session, "Peer is not in your group: " + targetPeerId);
             return;
         }
 
         Optional<WebSocketSession> target = peerRegistry.find(targetPeerId);
         if (target.isEmpty()) {
-            roomRegistry.removePeer(targetPeerId);
+            groupRegistry.removePeer(targetPeerId);
             sendError(session, "Target peer is offline: " + targetPeerId);
             return;
         }
 
         ObjectNode payload = objectMapper.createObjectNode();
-        payload.put("roomId", roomId);
+        payload.put("groupId", groupId);
+        payload.put("roomId", groupId);
         JsonNode message = payloadNode != null && payloadNode.has("message")
                 ? payloadNode.get("message")
                 : objectMapper.nullNode();
         payload.set("message", message);
-        sendSignal(target.get(), "room-private-relay", payload, from);
+        sendSignal(target.get(), signal.type().startsWith("room-") ? "room-private-relay" : "group-private-relay",
+                payload, from);
     }
 
-    private void relayRoomFileMessage(WebSocketSession session, SignalMessage signal) throws Exception {
+    private void relayGroupFileMessage(WebSocketSession session, SignalMessage signal) throws Exception {
         String from = peerRegistry.peerId(session).orElse(signal.from());
-        String roomId = roomRegistry.roomOf(from);
-        if (roomId == null) {
-            sendError(session, "Peer is not in a room");
+        String groupId = groupRegistry.groupOf(from);
+        if (groupId == null) {
+            sendError(session, "Peer is not in a group");
             return;
         }
 
         JsonNode payloadNode = signal.payload();
         String targetPeerId = payloadNode == null ? "" : payloadNode.path("to").asText("");
         if (targetPeerId.isBlank()) {
-            if (!"room-file-offer".equals(signal.type())) {
+            if (!"group-file-offer".equals(signal.type()) && !"room-file-offer".equals(signal.type())) {
                 sendError(session, "Missing file relay target");
                 return;
             }
-            for (String peerId : roomRegistry.peersInSameRoom(from)) {
-                forwardRoomFileMessage(peerId, signal, from, roomId, session);
+            for (String peerId : groupRegistry.peersInSameGroup(from)) {
+                forwardGroupFileMessage(peerId, signal, from, groupId, session);
             }
             return;
         }
 
-        if (!roomRegistry.peersInSameRoom(from).contains(targetPeerId)) {
-            sendError(session, "Peer is not in your room: " + targetPeerId);
+        if (!groupRegistry.peersInSameGroup(from).contains(targetPeerId)) {
+            sendError(session, "Peer is not in your group: " + targetPeerId);
             return;
         }
-        forwardRoomFileMessage(targetPeerId, signal, from, roomId, session);
+        forwardGroupFileMessage(targetPeerId, signal, from, groupId, session);
     }
 
-    private void forwardRoomFileMessage(String targetPeerId, SignalMessage signal, String from, String roomId,
+    private void forwardGroupFileMessage(String targetPeerId, SignalMessage signal, String from, String groupId,
                                         WebSocketSession sourceSession) throws Exception {
         Optional<WebSocketSession> target = peerRegistry.find(targetPeerId);
         if (target.isEmpty()) {
-            roomRegistry.removePeer(targetPeerId);
+            groupRegistry.removePeer(targetPeerId);
             sendError(sourceSession, "Target peer is offline: " + targetPeerId);
             return;
         }
@@ -239,16 +246,23 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
         ObjectNode payload = signal.payload() == null || signal.payload().isNull()
                 ? objectMapper.createObjectNode()
                 : signal.payload().deepCopy();
-        payload.put("roomId", roomId);
+        payload.put("groupId", groupId);
+        payload.put("roomId", groupId);
         payload.remove("to");
-        sendSignal(target.get(), signal.type(), payload, from);
+        sendSignal(target.get(), signal.type().replaceFirst("^room-", "group-"), payload, from);
     }
 
-    private String roomId(SignalMessage signal) {
-        if (signal.payload() == null || signal.payload().get("roomId") == null) {
+    private String groupId(SignalMessage signal) {
+        if (signal.payload() == null) {
             return "";
         }
-        return signal.payload().get("roomId").asText("");
+        if (signal.payload().get("groupId") != null) {
+            return signal.payload().get("groupId").asText("");
+        }
+        if (signal.payload().get("roomId") != null) {
+            return signal.payload().get("roomId").asText("");
+        }
+        return "";
     }
 
     private void sendSignal(WebSocketSession session, String type, ObjectNode payload) throws Exception {
@@ -260,23 +274,28 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
         peerRegistry.send(session, objectMapper.writeValueAsString(signal));
     }
 
-    private void notifyPeerLeft(RoomRegistry.Removal removal) {
-        if (removal.roomId() == null) {
+    private void notifyPeerLeft(GroupRegistry.Removal removal) {
+        if (removal.groupId() == null) {
             return;
         }
         ObjectNode payload = objectMapper.createObjectNode();
-        payload.put("roomId", removal.roomId());
+        payload.put("groupId", removal.groupId());
+        payload.put("roomId", removal.groupId());
         payload.put("peerId", removal.peerId());
         for (String remainingPeer : removal.remainingPeers()) {
             peerRegistry.find(remainingPeer).ifPresent(session -> {
                 try {
-                    sendSignal(session, "room-peer-left", payload);
+                    sendSignal(session, "group-peer-left", payload);
                 } catch (Exception ignored) {
                     peerRegistry.unregister(session);
-                    roomRegistry.removePeer(remainingPeer);
+                    groupRegistry.removePeer(remainingPeer);
                 }
             });
         }
+    }
+
+    private String replyType(String requestType, String groupType, String roomType) {
+        return requestType != null && requestType.startsWith("room-") ? roomType : groupType;
     }
 
     private Optional<String> peerIdFrom(URI uri) {
