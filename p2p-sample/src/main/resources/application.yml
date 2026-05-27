@@ -9,3 +9,14 @@ p2p:
     turn-port: 3478
     turn-username: p2p
     turn-password: changeme
+
+ice4j:
+  ice:
+    termination-delay: 1 hour
+  harvest:
+    use-ipv6: false
+    use-link-local-addresses: false
+    timeout: 3 seconds
+    mapping:
+      aws:
+        enabled: false

@@ -32,9 +32,11 @@ public class IceNegotiationService {
     private static final int DEFAULT_MAX_PORT = 51000;
 
     public IceSession createSession(String localPeerId, boolean controlling, IceServerConfig config) throws Exception {
+        Ice4jConfigBridge.applyFromApplicationYaml();
+
         Agent agent = new Agent();
         agent.setControlling(controlling);
-        agent.setNominationStrategy(NominationStrategy.NOMINATE_HIGHEST_PRIO);
+        agent.setNominationStrategy(NominationStrategy.NOMINATE_FIRST_VALID);
 
         if (config.stunServer() != null && !config.stunServer().isBlank()) {
             agent.addCandidateHarvester(new StunCandidateHarvester(
