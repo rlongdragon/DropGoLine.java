@@ -1,4 +1,4 @@
-package p2p.chat;
+package p2p.session;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -16,8 +16,11 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ChatSession implements AutoCloseable {
+public class P2pSession implements AutoCloseable {
     private static final long KEEPALIVE_SECONDS = 10;
+    private static final Listener NOOP_LISTENER = new Listener() {
+    };
+
     private final String localPeerId;
     private final String remotePeerId;
     private final Path downloadDirectory;
@@ -26,22 +29,28 @@ public class ChatSession implements AutoCloseable {
     private final CountDownLatch closed = new CountDownLatch(1);
     private final AtomicBoolean closedOnce = new AtomicBoolean();
     private final Runnable onClose;
+    private final Listener listener;
     private final Map<String, Path> localOffers = new ConcurrentHashMap<>();
     private final Map<String, RemoteOffer> remoteOffers = new ConcurrentHashMap<>();
     private volatile boolean running = true;
 
-    public ChatSession(String localPeerId, InputStream input, OutputStream output, Path downloadDirectory) {
+    public P2pSession(String localPeerId, InputStream input, OutputStream output, Path downloadDirectory) {
         this(localPeerId, "peer", input, output, downloadDirectory);
     }
 
-    public ChatSession(String localPeerId, String remotePeerId, InputStream input, OutputStream output,
+    public P2pSession(String localPeerId, String remotePeerId, InputStream input, OutputStream output,
                        Path downloadDirectory) {
         this(localPeerId, remotePeerId, input, output, downloadDirectory, () -> {
         });
     }
 
-    public ChatSession(String localPeerId, String remotePeerId, InputStream input, OutputStream output,
+    public P2pSession(String localPeerId, String remotePeerId, InputStream input, OutputStream output,
                        Path downloadDirectory, Runnable onClose) {
+        this(localPeerId, remotePeerId, input, output, downloadDirectory, onClose, NOOP_LISTENER);
+    }
+
+    public P2pSession(String localPeerId, String remotePeerId, InputStream input, OutputStream output,
+                       Path downloadDirectory, Runnable onClose, Listener listener) {
         this.localPeerId = localPeerId;
         this.remotePeerId = remotePeerId == null || remotePeerId.isBlank() ? "peer" : remotePeerId;
         this.input = new DataInputStream(input);
@@ -49,6 +58,7 @@ public class ChatSession implements AutoCloseable {
         this.downloadDirectory = downloadDirectory;
         this.onClose = onClose == null ? () -> {
         } : onClose;
+        this.listener = listener == null ? NOOP_LISTENER : listener;
     }
 
     public void startReader() {
@@ -62,21 +72,21 @@ public class ChatSession implements AutoCloseable {
 
     public void sendHello() throws IOException {
         synchronized (output) {
-            output.writeUTF(ChatProtocol.MAGIC);
+            output.writeUTF(SessionProtocol.MAGIC);
             output.flush();
         }
     }
 
     public void expectHello() throws IOException {
         String magic = input.readUTF();
-        if (!ChatProtocol.MAGIC.equals(magic)) {
+        if (!SessionProtocol.MAGIC.equals(magic)) {
             throw new IOException("unsupported chat protocol: " + magic);
         }
     }
 
     public void sendText(String text) throws IOException {
         synchronized (output) {
-            output.writeInt(ChatProtocol.TYPE_TEXT);
+            output.writeInt(SessionProtocol.TYPE_TEXT);
             output.writeUTF(text);
             output.flush();
         }
@@ -90,26 +100,26 @@ public class ChatSession implements AutoCloseable {
         String id = UUID.randomUUID().toString().substring(0, 8);
         localOffers.put(id, path);
         synchronized (output) {
-            output.writeInt(ChatProtocol.TYPE_FILE_OFFER);
+            output.writeInt(SessionProtocol.TYPE_FILE_OFFER);
             output.writeUTF(id);
             output.writeUTF(path.getFileName().toString());
             output.writeLong(Files.size(path));
             output.flush();
         }
-        ChatConsole.file("offered " + path + " as " + id);
+        listener.onNotice(localPeerId, "offered " + path + " as " + id);
     }
 
     public void requestFile(String id) throws IOException {
         synchronized (output) {
-            output.writeInt(ChatProtocol.TYPE_FILE_REQUEST);
+            output.writeInt(SessionProtocol.TYPE_FILE_REQUEST);
             output.writeUTF(id);
             output.flush();
         }
         RemoteOffer offer = remoteOffers.get(id);
         if (offer == null) {
-            ChatConsole.file("requested " + id);
+            listener.onNotice(localPeerId, "requested " + id);
         } else {
-            ChatConsole.file("requested " + id + " (" + offer.fileName() + ")");
+            listener.onNotice(localPeerId, "requested " + id + " (" + offer.fileName() + ")");
         }
     }
 
@@ -134,28 +144,28 @@ public class ChatSession implements AutoCloseable {
             while (running) {
                 int type = input.readInt();
                 switch (type) {
-                    case ChatProtocol.TYPE_TEXT -> ChatConsole.incoming(remotePeerId, input.readUTF());
-                    case ChatProtocol.TYPE_FILE_OFFER -> receiveFileOffer();
-                    case ChatProtocol.TYPE_FILE_REQUEST -> sendRequestedFile(input.readUTF());
-                    case ChatProtocol.TYPE_FILE_START -> receiveFile();
-                    case ChatProtocol.TYPE_NOTICE -> ChatConsole.notice(input.readUTF());
-                    case ChatProtocol.TYPE_KEEPALIVE -> {
+                    case SessionProtocol.TYPE_TEXT -> listener.onText(remotePeerId, input.readUTF());
+                    case SessionProtocol.TYPE_FILE_OFFER -> receiveFileOffer();
+                    case SessionProtocol.TYPE_FILE_REQUEST -> sendRequestedFile(input.readUTF());
+                    case SessionProtocol.TYPE_FILE_START -> receiveFile();
+                    case SessionProtocol.TYPE_NOTICE -> listener.onNotice(remotePeerId, input.readUTF());
+                    case SessionProtocol.TYPE_KEEPALIVE -> {
                     }
                     default -> throw new IOException("unknown chat frame type: " + type);
                 }
             }
         } catch (EOFException ignored) {
-            ChatConsole.system(remotePeerId + " disconnected");
+            listener.onDisconnected(remotePeerId);
         } catch (SocketException e) {
             if (running) {
-                ChatConsole.system(remotePeerId + " disconnected");
+                listener.onDisconnected(remotePeerId);
             }
         } catch (Exception e) {
             if (running) {
                 if (isClosedConnection(e)) {
-                    ChatConsole.system(remotePeerId + " disconnected");
+                    listener.onDisconnected(remotePeerId);
                 } else {
-                    ChatConsole.error(e.getMessage());
+                    listener.onError(remotePeerId, e);
                 }
             }
         } finally {
@@ -187,8 +197,7 @@ public class ChatSession implements AutoCloseable {
         String fileName = sanitizeFileName(input.readUTF());
         long size = input.readLong();
         remoteOffers.put(id, new RemoteOffer(fileName, size));
-        ChatConsole.file(remotePeerId + " offered " + id + " " + fileName + " (" + size + " bytes)");
-        ChatConsole.file("type /save " + id + " to download");
+        listener.onFileOffer(remotePeerId, id, fileName, size);
     }
 
     private void sendRequestedFile(String id) throws IOException {
@@ -206,27 +215,27 @@ public class ChatSession implements AutoCloseable {
     private void sendFile(String id, Path path) throws IOException {
         long size = Files.size(path);
         synchronized (output) {
-            output.writeInt(ChatProtocol.TYPE_FILE_START);
+            output.writeInt(SessionProtocol.TYPE_FILE_START);
             output.writeUTF(id);
             output.writeUTF(path.getFileName().toString());
             output.writeLong(size);
 
-            byte[] buffer = new byte[ChatProtocol.CHUNK_SIZE];
+            byte[] buffer = new byte[SessionProtocol.CHUNK_SIZE];
             try (InputStream fileInput = Files.newInputStream(path)) {
                 int read;
                 while ((read = fileInput.read(buffer)) >= 0) {
-                    output.writeInt(ChatProtocol.TYPE_FILE_CHUNK);
+                    output.writeInt(SessionProtocol.TYPE_FILE_CHUNK);
                     output.writeUTF(id);
                     output.writeInt(read);
                     output.write(buffer, 0, read);
                 }
             }
 
-            output.writeInt(ChatProtocol.TYPE_FILE_END);
+            output.writeInt(SessionProtocol.TYPE_FILE_END);
             output.writeUTF(id);
             output.flush();
         }
-        ChatConsole.file("sent " + path + " for " + id);
+        listener.onNotice(localPeerId, "sent " + path + " for " + id);
     }
 
     private void receiveFile() throws IOException {
@@ -240,14 +249,14 @@ public class ChatSession implements AutoCloseable {
         try (OutputStream fileOutput = Files.newOutputStream(target)) {
             while (true) {
                 int type = input.readInt();
-                if (type == ChatProtocol.TYPE_FILE_END) {
+                if (type == SessionProtocol.TYPE_FILE_END) {
                     String endId = input.readUTF();
                     if (!id.equals(endId)) {
                         throw new IOException("file end id mismatch");
                     }
                     break;
                 }
-                if (type != ChatProtocol.TYPE_FILE_CHUNK) {
+                if (type != SessionProtocol.TYPE_FILE_CHUNK) {
                     throw new IOException("expected file chunk, got frame type " + type);
                 }
                 String chunkId = input.readUTF();
@@ -255,7 +264,7 @@ public class ChatSession implements AutoCloseable {
                     throw new IOException("file chunk id mismatch");
                 }
                 int length = input.readInt();
-                if (length < 0 || length > ChatProtocol.CHUNK_SIZE) {
+                if (length < 0 || length > SessionProtocol.CHUNK_SIZE) {
                     throw new IOException("invalid file chunk length: " + length);
                 }
                 byte[] chunk = new byte[length];
@@ -269,12 +278,12 @@ public class ChatSession implements AutoCloseable {
             throw new IOException("file size mismatch for " + id + ": expected " + size + ", got " + received);
         }
         remoteOffers.remove(id);
-        ChatConsole.file("saved " + target);
+        listener.onFileSaved(remotePeerId, id, target);
     }
 
     private void sendNotice(String message) throws IOException {
         synchronized (output) {
-            output.writeInt(ChatProtocol.TYPE_NOTICE);
+            output.writeInt(SessionProtocol.TYPE_NOTICE);
             output.writeUTF(message);
             output.flush();
         }
@@ -282,7 +291,7 @@ public class ChatSession implements AutoCloseable {
 
     private void sendKeepalive() throws IOException {
         synchronized (output) {
-            output.writeInt(ChatProtocol.TYPE_KEEPALIVE);
+            output.writeInt(SessionProtocol.TYPE_KEEPALIVE);
             output.flush();
         }
     }
@@ -307,5 +316,25 @@ public class ChatSession implements AutoCloseable {
     }
 
     private record RemoteOffer(String fileName, long size) {
+    }
+
+    public interface Listener {
+        default void onText(String fromPeerId, String text) {
+        }
+
+        default void onFileOffer(String fromPeerId, String id, String fileName, long size) {
+        }
+
+        default void onFileSaved(String fromPeerId, String id, Path target) {
+        }
+
+        default void onNotice(String fromPeerId, String message) {
+        }
+
+        default void onDisconnected(String peerId) {
+        }
+
+        default void onError(String peerId, Exception error) {
+        }
     }
 }

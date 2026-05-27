@@ -1,4 +1,4 @@
-package p2p.chat;
+package sample.chat;
 
 import java.io.BufferedReader;
 import java.io.FileInputStream;

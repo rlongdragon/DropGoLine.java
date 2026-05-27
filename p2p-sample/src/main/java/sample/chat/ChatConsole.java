@@ -1,4 +1,4 @@
-package p2p.chat;
+package sample.chat;
 
 final class ChatConsole {
     private static final boolean COLOR = System.getenv("NO_COLOR") == null;
