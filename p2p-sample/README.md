@@ -24,8 +24,7 @@ mvn package
 
 ## 本機 QUIC 憑證
 
-不要把 private key commit 進 repo。執行會接受 QUIC 連線的 peer 前，先在被忽略的
-`target/dev-certs` 產生本機 demo 憑證：
+不要把 private key commit 進 repo。執行會接受 QUIC 連線的 peer 前，先在被忽略的 `target/dev-certs` 產生本機 demo 憑證：
 
 ```sh
 mkdir -p target/dev-certs
@@ -104,12 +103,9 @@ STUN_SERVER= mvn exec:java \
 ## Group Chat App 與選擇性檔案接收
 
 Group chat sample 使用同一套 signaling、ICE、QUIC 連線堆疊。流程延續原本 C# chat：
-一個 peer 建立 group，其他 peer 用 group code 加入，signaling server 介紹 group 內的
-peers，client 之間再建立直接 QUIC link。文字訊息也會透過 server relay 作為備援路徑；
-如果某個 peer 已經有 direct link，來自 relay 的重複訊息會被忽略。
+一個 peer 建立 group，其他 peer 用 group code 加入，signaling server 介紹 group 內的 peers，client 之間再建立直接 QUIC link。文字訊息也會透過 server relay 作為備援路徑；如果某個 peer 已經有 direct link，來自 relay 的重複訊息會被忽略。
 
-一般輸入會 broadcast 成文字。`/msg <username> <message>` 會傳 private message 給單一
-connected peer。`/file <path>` 會把檔案 offer 廣播給所有 direct peer，
+一般輸入會 broadcast 成文字。`/msg <username> <message>` 會傳 private message 給單一 connected peer。`/file <path>` 會把檔案 offer 廣播給所有 direct peer，
 `/file <path> <username>` 只 offer 給單一 peer。接收端必須輸入 `/save <id>` 才會開始接收檔案。
 
 Terminal 1，signaling server：
@@ -135,8 +131,7 @@ Enter Server IP (default 127.0.0.1:18080):
 1
 ```
 
-如果 signaling server 在其他 port，可以在啟動 client 前設定 `SIGNALING_PORT`，或在
-Server IP prompt 輸入像 `127.0.0.1:8080` 這樣的位址。
+如果 signaling server 在其他 port，可以在啟動 client 前設定 `SIGNALING_PORT`，或在 Server IP prompt 輸入像 `127.0.0.1:8080` 這樣的位址。
 
 Terminal 3，啟動 Alice 的 chat client：
 
@@ -204,8 +199,7 @@ P2pSessionInstance group = p2p.joinGroup("JCMD");
 Set<String> members = group.showMembers();
 ```
 
-Chat CLI 現在的 group `create` 和 `join` 會使用這套 API。較底層的 `listen` 和 `connect`
-commands 仍保留，方便 debug direct streams。
+Chat CLI 現在的 group `create` 和 `join` 會使用這套 API。較底層的 `listen` 和 `connect` commands 仍保留，方便 debug direct streams。
 
 Package 角色：
 
