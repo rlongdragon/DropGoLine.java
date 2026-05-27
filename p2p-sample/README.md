@@ -120,6 +120,14 @@ Terminal 2，啟動 Bob 的 chat client：
 SIGNALING_PORT=18080 STUN_SERVER= P2P_UDP_PREFERRED_PORT=50000 mvn exec:java \
   -Dexec.mainClass=sample.chat.P2pChatCli
 ```
+如果是 windows powershell，環境變數設定方式不同：
+
+```pwsh
+$env:SIGNALING_PORT = "18080"
+$env:STUN_SERVER = ""
+$env:P2P_UDP_PREFERRED_PORT = "50000"
+mvn exec:java "-Dexec.mainClass=sample.chat.P2pChatCli"
+```
 
 接著回答提示：
 
