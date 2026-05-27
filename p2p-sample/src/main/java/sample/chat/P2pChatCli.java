@@ -371,12 +371,12 @@ public class P2pChatCli {
                         continue;
                     }
                     if (line.equals("/file") || line.startsWith("/file ")) {
-                        String path = argument(line, "/file");
-                        if (path.isBlank()) {
+                        FileCommand command = parseFileCommand(argument(line, "/file"));
+                        if (command == null || command.targetPeerId() != null) {
                             ChatConsole.file("usage: /file <path>");
                             continue;
                         }
-                        chat.offerFile(Path.of(path));
+                        chat.offerFile(command.path());
                         continue;
                     }
                     if (line.equals("/save") || line.startsWith("/save ")) {
@@ -496,15 +496,51 @@ public class P2pChatCli {
     }
 
     private static FileCommand parseFileCommand(String value) {
-        String[] parts = value.trim().split("\\s+", 2);
-        if (parts.length == 0 || parts[0].isBlank()) {
+        String trimmed = value.trim();
+        if (trimmed.isBlank()) {
             return null;
         }
-        String target = parts.length == 2 && !parts[1].isBlank() ? parts[1].trim() : null;
+
+        ParsedPath parsed = parsePathToken(trimmed);
+        if (parsed == null) {
+            return null;
+        }
+
+        String target = parsed.remainder().isBlank() ? null : parsed.remainder();
         if (target != null && target.contains(" ")) {
             return null;
         }
-        return new FileCommand(Path.of(parts[0]), target);
+        return new FileCommand(Path.of(parsed.path()), target);
+    }
+
+    private static ParsedPath parsePathToken(String value) {
+        if (value.startsWith("\"")) {
+            StringBuilder path = new StringBuilder();
+            boolean escaping = false;
+            for (int i = 1; i < value.length(); i++) {
+                char c = value.charAt(i);
+                if (escaping) {
+                    path.append(c);
+                    escaping = false;
+                    continue;
+                }
+                if (c == '\\' && i + 1 < value.length() && value.charAt(i + 1) == '"') {
+                    escaping = true;
+                    continue;
+                }
+                if (c == '"') {
+                    String remainder = value.substring(i + 1).trim();
+                    return path.isEmpty() ? null : new ParsedPath(path.toString(), remainder);
+                }
+                path.append(c);
+            }
+            return null;
+        }
+
+        String[] parts = value.split("\\s+", 2);
+        String path = parts[0].trim();
+        String remainder = parts.length == 2 ? parts[1].trim() : "";
+        return path.isBlank() ? null : new ParsedPath(path, remainder);
     }
 
     private static String userMessage(Exception e) {
@@ -530,6 +566,9 @@ public class P2pChatCli {
     }
 
     private record FileCommand(Path path, String targetPeerId) {
+    }
+
+    private record ParsedPath(String path, String remainder) {
     }
 
     private static void usage() {

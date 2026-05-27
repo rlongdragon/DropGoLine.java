@@ -297,7 +297,10 @@ public class P2pSession implements AutoCloseable {
     }
 
     private String sanitizeFileName(String fileName) {
-        return Path.of(fileName).getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
+        String sanitized = Path.of(fileName).getFileName().toString()
+                .replaceAll("[<>:\"/\\\\|?*\\p{Cntrl}]", "_")
+                .trim();
+        return sanitized.isBlank() ? "download" : sanitized;
     }
 
     private boolean isClosedConnection(Exception e) {

@@ -575,7 +575,10 @@ public final class P2pSessionInstance implements AutoCloseable {
         if (fileName == null || fileName.isBlank()) {
             return "";
         }
-        return Path.of(fileName).getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
+        String sanitized = Path.of(fileName).getFileName().toString()
+                .replaceAll("[<>:\"/\\\\|?*\\p{Cntrl}]", "_")
+                .trim();
+        return sanitized.isBlank() ? "download" : sanitized;
     }
 
     private static String env(String name, String fallback) {
