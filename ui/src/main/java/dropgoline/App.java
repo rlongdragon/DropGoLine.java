@@ -1,5 +1,7 @@
 package dropgoline;
 
+import dropgoline.net.MockP2PManager;
+import dropgoline.net.P2PManager;
 import dropgoline.ui.MainStage;
 
 import javafx.application.Application;
@@ -9,13 +11,10 @@ public class App extends Application {
 
     @Override
     public void start(Stage primaryStage) {
-        MainStage mainStage = new MainStage();
+        // 之後換成 new RealP2PManager(...) 就完成整合
+        P2PManager p2p = new MockP2PManager();
 
-        // 先加幾個假好友測試版面（之後會由後端通知時才動態新增）
-        mainStage.addPeer("Alice");
-        mainStage.addPeer("Bob");
-        mainStage.addPeer("Carol");
-
+        MainStage mainStage = new MainStage(p2p);
         mainStage.show();
     }
 
