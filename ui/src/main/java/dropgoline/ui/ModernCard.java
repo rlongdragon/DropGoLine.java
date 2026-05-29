@@ -1,8 +1,14 @@
 package dropgoline.ui;
 
 import java.io.File;
+import java.security.Key;
 import java.util.List;
 
+import javafx.animation.Interpolator;
+import javafx.animation.KeyFrame;
+import javafx.animation.KeyValue;
+import javafx.animation.Timeline;
+import javafx.util.Duration;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.ContextMenu;
@@ -75,6 +81,7 @@ public class ModernCard extends StackPane {
         setupDragReceiving();
         setupDragSource();
         setupContextMenu();
+        setupHoverAnimation();
     }
 
     private void setupDragReceiving() {
@@ -156,6 +163,21 @@ public class ModernCard extends StackPane {
             menu.show(this, event.getScreenX(), event.getScreenY());
             event.consume();
         });
+    }
+
+    private void setupHoverAnimation(){
+        setOnMouseEntered(e -> animateScale(1.03));
+        setOnMouseExited(e -> animateScale(1.0));
+    }
+
+    private void animateScale(double target){
+        Timeline t = new Timeline(
+            new KeyFrame(Duration.millis(150),
+                new KeyValue(scaleXProperty(), target, Interpolator.EASE_OUT),
+                new KeyValue(scaleYProperty(), target, Interpolator.EASE_OUT)
+            )
+        );
+        t.play();
     }
 
     public void setPendingFile(String fileName, long fileSize){

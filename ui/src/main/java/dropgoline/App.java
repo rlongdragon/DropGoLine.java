@@ -1,21 +1,72 @@
 package dropgoline;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
 import dropgoline.net.MockP2PManager;
 import dropgoline.net.P2PManager;
+import dropgoline.net.RealP2PManager;
+import dropgoline.settings.AppSettings;
 import dropgoline.ui.MainStage;
 
 import javafx.application.Application;
+import javafx.scene.control.TextInputDialog;
 import javafx.stage.Stage;
 
 public class App extends Application {
 
+    // 暫時用環境變數切換 mock/real，方便開發時不依賴 signaling server
+    // 跑時加 -DuseMock=true 就會用 mock，預設用 real
+    private static final boolean USE_MOCK = Boolean.parseBoolean(
+        System.getProperty("useMock", "false")
+    );
+
     @Override
     public void start(Stage primaryStage) {
-        // 之後換成 new RealP2PManager(...) 就完成整合
-        P2PManager p2p = new MockP2PManager();
+        P2PManager p2p;
+
+        if (USE_MOCK) {
+            System.out.println("[App] 使用 Mock 後端");
+            p2p = new MockP2PManager();
+        } else {
+            p2p = buildRealP2P();
+        }
 
         MainStage mainStage = new MainStage(p2p);
         mainStage.show();
+    }
+
+    private P2PManager buildRealP2P() {
+        AppSettings settings = AppSettings.current();
+
+        // 1. 取得使用者名稱（DeviceName 空的話跳對話框）
+        String name = settings.getDeviceName();
+        if (name == null || name.isBlank()) {
+            TextInputDialog dlg = new TextInputDialog("User");
+            dlg.setTitle("設定使用者名稱");
+            dlg.setHeaderText("第一次使用，請輸入你的名稱");
+            dlg.setContentText("名稱：");
+            name = dlg.showAndWait().orElse("User");
+            settings.setDeviceName(name);
+            settings.save();
+        }
+
+        // 2. 組 signaling URL
+        String serverIp = settings.getServerIP();
+        if (serverIp == null || serverIp.isBlank()) {
+            serverIp = "127.0.0.1";
+        }
+        String signalingUrl = "ws://" + serverIp + ":18080/signal";
+
+        // 3. 下載目錄（用使用者 home / Downloads / DropGoLine）
+        Path downloadDir = Paths.get(System.getProperty("user.home"), "Downloads", "DropGoLine");
+
+        System.out.println("[App] 連線設定：");
+        System.out.println("  name = " + name);
+        System.out.println("  signaling = " + signalingUrl);
+        System.out.println("  downloadDir = " + downloadDir);
+
+        return new RealP2PManager(name, signalingUrl, downloadDir);
     }
 
     public static void main(String[] args) {

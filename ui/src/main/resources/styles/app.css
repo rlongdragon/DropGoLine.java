@@ -1,0 +1,116 @@
+.root{
+    -fx-background-color: #232323;
+}
+
+.title-bar{
+    -fx-background-color: #1a1a1a;
+}
+.title-text{
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+    -fx-padding: 0 0 0 6px;
+}
+
+.window-button{
+    -fx-background-color: transparent;
+    -fx-text-fill: #aaa;
+    -fx-font-size: 14px;
+    -fx-padding: 2 10 2 10;
+    -fx-background-radius: 0;
+    -fx-cursor: hand;
+}
+.window-button:hover{
+    -fx-background-color: #3a3a3a;
+    -fx-text-fill: white;
+}
+.window-button.close:hover{
+    -fx-background-color: #e74c3c;
+    -fx-text-fill: white;
+}
+
+.menu-bar{
+    -fx-background-color: #1a1a1a;
+}
+.menu-bar > .container > .menu-button > .label{
+    -fx-text-fill: white;
+}
+.menu-bar > .container > .menu-button:hover,
+.menu-bar > .container > .menu-button:showing{
+    -fx-background-color: #3a3a3a;
+}
+
+.id-label{
+    -fx-background-color: #1a1a1a;
+    -fx-text-fill: #ccc;
+    -fx-font-size: 11px;
+}
+
+.scroll-pane,
+.scroll-pane .viewport{
+    -fx-background-color: transparent;
+}
+
+.label{
+    -fx-text-fill: white;
+}
+
+.text-field, .text-area{
+    -fx-background-color: #3a3a3a;
+    -fx-text-fill: white;
+    -fx-prompt-text-fill: #888;
+    -fx-background-radius: 4;
+    -fx-padding: 6 10 6 10;
+}
+
+.check-box > .box{
+    -fx-background-color: #3a3a3a;
+    -fx-border-color: #555;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+}
+
+.check-box:selected > .box{
+    -fx-background-color: #4a90e2;
+    -fx-border-color: #4a90e2;
+}
+
+.check-box:selected > .box > .mark{
+    -fx-background-color: white;
+}
+
+.button{
+    -fx-background-color: #3a3a3a;
+    -fx-text-fill: white;
+    -fx-background-radius: 4;
+    -fx-padding: 6 16 6 16;
+    -fx-cursor: hand;
+}
+
+.button:hover{
+    -fx-background-color: #4a4a4a;
+}
+
+.button:pressed{
+    -fx-background-color: #2a2a2a;
+}
+
+.scroll-bar{
+    -fx-background-color: transparent;
+}
+
+.scroll-bar .thumb{
+    -fx-background-color: #555;
+    -fx-background-radius: 6;
+}
+
+.scroll-bar .track,
+.scroll-bar .increment-button,
+.scroll-bar .decrement-button{
+    -fx-background-color: transparent;
+}
+
+.scroll-bar .increment-arrow,
+.scroll-bar .decrement-arrow{
+    -fx-padding: 0;
+}

@@ -28,7 +28,8 @@ public class HistoryStage extends Stage{
         scrollPane.setFitToWidth(true);
 
         Scene scene = new Scene(scrollPane);
-        scene.getStylesheets().add(
+        scene.getStylesheets().addAll(
+            getClass().getResource("/styles/app.css").toExternalForm(),
             getClass().getResource("/styles/modern-card.css").toExternalForm()
         );
         setScene(scene);

@@ -30,6 +30,9 @@ public class ProgressStage extends Stage{
         root.getChildren().addAll(statusLabel, progressBar);
 
         Scene scene = new Scene(root, 350, 100);
+        scene.getStylesheets().add(
+            getClass().getResource("/styles/app.css").toExternalForm()
+        );
         setScene(scene);
     }
 

@@ -61,7 +61,11 @@ public class SettingsStage extends Stage {
             );
             root.setPadding(new Insets(20));
 
-            setScene(new Scene(root));
+        Scene scene = new Scene(root);
+        scene.getStylesheets().add(
+            getClass().getResource("/styles/app.css").toExternalForm()
+        );
+        setScene(scene);
     }
 
     private void save(){
