@@ -1,5 +1,6 @@
 package dropgoline.ui;
 
+import java.io.File;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,9 +25,10 @@ public class MainStage extends Stage implements P2PListener {
     private final P2PManager p2p;
     private final FlowPane cardPane;
     private final Map<String, ModernCard> cards = new HashMap<>();
+    private final Map<String, ProgressStage> activeProgress= new HashMap<>();
     private final Label idLabel;
 
-    public MainStage(P2PManager p2p){
+    public MainStage(P2PManager p2p) {
         this.p2p = p2p;
 
         setTitle("DropGoLine");
@@ -86,6 +88,16 @@ public class MainStage extends Stage implements P2PListener {
         HistoryStage history = new HistoryStage(peerName, List.of());
         history.show();
     }
+
+    private void startDownload(String peerName){
+        if (activeProgress.containsKey(peerName)){
+            return;
+        }
+        ProgressStage progressStage = new ProgressStage(peerName + " 的檔案");
+        activeProgress.put(peerName, progressStage);
+        progressStage.show();
+        p2p.requestDownload(peerName);
+    }
     
     @Override
     public void onIdChanged(String id) {
@@ -111,6 +123,16 @@ public class MainStage extends Stage implements P2PListener {
             }
         });
     }
+
+    @Override
+    public void onFileOffer(String peerName, String fileName, long fileSize) {
+        Platform.runLater(() -> {
+            ModernCard card = cards.get(peerName);
+            if (card != null){
+                card.setPendingFile(fileName, fileSize);
+            }
+        });
+    }
     
     @Override
     public void onTransferProgress(String peerName, double progress) {
@@ -121,6 +143,23 @@ public class MainStage extends Stage implements P2PListener {
             }
         });
     }
+
+    @Override
+    public void onTransferComplete(String peerName, File file) {
+        Platform.runLater(() -> {
+            ProgressStage ps = activeProgress.remove(peerName);
+            if (ps != null){
+                ps.close();
+            }
+
+            ModernCard card = cards.get(peerName);
+            if (card != null){
+                card.setFile(file);
+                card.setDownloaded(true);
+            }
+        });
+    }
+
     private void addPeer(String name){
         if (cards.containsKey(name)){
             return;
@@ -128,6 +167,7 @@ public class MainStage extends Stage implements P2PListener {
         ModernCard card = new ModernCard(name);
         card.setText("尚無訊息");
         card.setOnHistoryRequest(() -> openHistoryFor(name));
+        card.setOnDownloadRequest(() -> startDownload(name));
 
         cards.put(name, card);
         cardPane.getChildren().add(card);
@@ -137,6 +177,11 @@ public class MainStage extends Stage implements P2PListener {
         ModernCard card = cards.remove(name);
         if (card != null){
             cardPane.getChildren().remove(card);
+        }
+
+        ProgressStage ps = activeProgress.remove(name);
+        if (ps != null){
+            ps.close();
         }
     }
 }

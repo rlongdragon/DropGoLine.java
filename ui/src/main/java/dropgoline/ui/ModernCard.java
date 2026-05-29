@@ -29,6 +29,8 @@ public class ModernCard extends StackPane {
     private String dragText = null;
     private File dragFile = null;
 
+    private MenuItem downloadItem;
+    private Runnable onDownloadRequest;
     private Runnable onHistoryRequest;
 
     public ModernCard(String name) {
@@ -44,10 +46,11 @@ public class ModernCard extends StackPane {
 
         previewView = new ImageView();
         previewView.setFitWidth(180);
+        previewView.setFitHeight(100);
         previewView.setPreserveRatio(true);
         previewView.setSmooth(true);
 
-        transferBar = new ProgressBar();
+        transferBar = new ProgressBar(0);
         transferBar.getStyleClass().add("card-progress");
         transferBar.setMaxWidth(Double.MAX_VALUE);
         transferBar.setVisible(false);
@@ -83,7 +86,7 @@ public class ModernCard extends StackPane {
             event.consume();
         });
 
-        setOnDragDropped(event -> {
+        setOnDragEntered(event -> {
             Dragboard db = event.getDragboard();
             if (db.hasFiles() || db.hasString()) {
                 getStyleClass().add("drag-over");
@@ -115,13 +118,12 @@ public class ModernCard extends StackPane {
 
     private void setupDragSource() {
         setOnDragDetected(event -> {
-            System.out.println(">>> 偵測到拖曳, dragText=" + dragText + ", dragFile=" + dragFile);
             ClipboardContent content = new ClipboardContent();
             if (dragFile != null) {
-                content.putFiles(List.of(dragFile)); 
-            }else if (dragText != null && !dragText.isEmpty()){
+                content.putFiles(List.of(dragFile));
+            } else if (dragText != null && !dragText.isEmpty()) {
                 content.putString(dragText);
-            }else{
+            } else {
                 event.consume();
                 return;
             }
@@ -131,16 +133,24 @@ public class ModernCard extends StackPane {
         });
     }
 
-    private void setupContextMenu(){
+    private void setupContextMenu() {
         ContextMenu menu = new ContextMenu();
+
+        downloadItem = new MenuItem("下載");
+        downloadItem.setVisible(false);
+        downloadItem.setOnAction(e -> {
+            if (onDownloadRequest != null) {
+                onDownloadRequest.run();
+            }
+        });
 
         MenuItem historyItem = new MenuItem("歷史紀錄");
         historyItem.setOnAction(e -> {
-            if (onHistoryRequest != null){
+            if (onHistoryRequest != null) {
                 onHistoryRequest.run();
             }
         });
-        menu.getItems().add(historyItem);
+        menu.getItems().addAll(downloadItem, historyItem);
 
         setOnContextMenuRequested(event -> {
             menu.show(this, event.getScreenX(), event.getScreenY());
@@ -148,18 +158,32 @@ public class ModernCard extends StackPane {
         });
     }
 
-    public void setText(String text){
+    public void setPendingFile(String fileName, long fileSize){
+        contentLabel.setText("📥 " + fileName + "\n" + formatSize(fileSize));
+        layout.setCenter(contentLabel);
+        dragText = null;
+        dragFile = null;
+        downloadItem.setVisible(true);
+    }
+
+    public void setText(String text) {
         contentLabel.setText(text);
         layout.setCenter(contentLabel);
         dragText = text;
         dragFile = null;
+        if (downloadItem != null){
+            downloadItem.setVisible(false);
+        }
     }
 
-    public void setFile(File file){
+    public void setFile(File file) {
         contentLabel.setText("📄 " + file.getName());
         layout.setCenter(contentLabel);
         dragFile = file;
         dragText = null;
+        if (downloadItem != null){
+            downloadItem.setVisible(false);
+        }
     }
 
     public void setPreviewImage(Image image) {
@@ -187,11 +211,22 @@ public class ModernCard extends StackPane {
         checkMark.setVisible(downloaded);
     }
 
-    public void setOnHistoryRequest(Runnable handler){
+    public void setOnHistoryRequest(Runnable handler) {
         this.onHistoryRequest = handler;
     }
 
-    public String getPeerName(){
+    public void setOnDownloadRequest(Runnable handler) {
+        this.onDownloadRequest = handler;
+    }
+
+    public String getPeerName() {
         return peername;
+    }
+
+    private String formatSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
     }
 }
