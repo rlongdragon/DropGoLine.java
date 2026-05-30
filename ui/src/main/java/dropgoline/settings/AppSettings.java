@@ -21,7 +21,7 @@ public class AppSettings {
     }
 
     // === 設定欄位（含預設值）===
-    private String serverIP = "127.0.0.1";
+    private String serverIP = "23.146.248.110";
     private String deviceName = "";
     private boolean autoClipboardCopy = false;
     private boolean autoClipboardSync = false;

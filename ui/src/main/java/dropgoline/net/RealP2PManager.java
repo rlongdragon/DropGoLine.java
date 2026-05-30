@@ -3,34 +3,33 @@ package dropgoline.net;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ConcurrentHashMap;
 
 import p2p.api.P2p;
 import p2p.api.P2pSessionInstance;
 
-public class RealP2PManager implements P2PManager{
+public class RealP2PManager implements P2PManager {
+
     private final String localName;
-    private final String signallingUrl;
+    private final String signalingUrl;
     private final Path downloadDir;
 
     private P2p p2p;
     private P2pSessionInstance group;
     private P2PListener listener;
 
-    private final Map<String, String> latestOfferByPeer= new HashMap<>();
-    private final Set<String> knownMembers = new HashSet<>();
-    private ScheduledExecutorService memberMonitor;
+    // 每個 peer 最近一筆檔案邀請的 offerId（requestDownload 要用）
+    private final Map<String, String> latestOfferByPeer = new ConcurrentHashMap<>();
 
-    public RealP2PManager(String localName, String signallingUrl, Path downloadDir) {
+    // 已回報給 UI 的 peer，避免重複觸發 onPeerJoined
+    private final Set<String> reportedPeers = ConcurrentHashMap.newKeySet();
+
+    public RealP2PManager(String localName, String signalingUrl, Path downloadDir) {
         this.localName = localName;
-        this.signallingUrl = signallingUrl;
+        this.signalingUrl = signalingUrl;
         this.downloadDir = downloadDir;
     }
 
@@ -41,47 +40,44 @@ public class RealP2PManager implements P2PManager{
 
     @Override
     public void connect(String code) {
+        // 背景執行緒：建連線可能要數秒，不能卡 UI
         new Thread(() -> {
             try {
                 Files.createDirectories(downloadDir);
 
-                if (p2p != null) {
-                    p2p = P2p.connect(localName, signallingUrl, downloadDir);
+                if (p2p == null) {
+                    p2p = P2p.connect(localName, signalingUrl, downloadDir);
                 }
 
                 if (code == null || code.isBlank()) {
-                    String newCode = p2p.createGroup();
-                    group = p2p.createGroup();
-                    if (listener != null) {
-                        listener.onIdChanged(newCode);
-                    }
+                    String newCode = p2p.createGroup();      // 建立新 group
+                    group = p2p.currentGroup();
+                    if (listener != null) listener.onIdChanged(newCode);
                 } else {
-                    group = p2p.joinGroup(code);
-                    if (listener != null) {
-                        listener.onIdChanged(code);
-                    }
-
-                    attachEventListeners();
-                    startMemberMonitor();
+                    group = p2p.joinGroup(code);             // 加入既有 group
+                    if (listener != null) listener.onIdChanged(code);
                 }
+
+                attachEventListener();
+                reportInitialMembers();   // 補抓加入前就在房裡的人
             } catch (Exception ex) {
-                System.err.println("P2P連線失敗：" + ex.getMessage());
+                System.err.println("P2P 連線失敗：" + ex.getMessage());
                 ex.printStackTrace();
             }
         }, "p2p-connect").start();
     }
 
-    private void attachEventListener(){
+    private void attachEventListener() {
         group.createReceivedListener(
             event -> {
-                switch (event.type()){
+                switch (event.type()) {
                     case MESSAGE -> {
                         if (listener != null) {
                             listener.onMessageReceived(event.from(), event.message());
                         }
                     }
                     case FILE_OFFER -> {
-                        latestOfferByPeer.put(event.from(), event.fileName());
+                        latestOfferByPeer.put(event.from(), event.offerId());
                         if (listener != null) {
                             listener.onFileOffer(event.from(), event.fileName(), event.fileSize());
                         }
@@ -92,108 +88,88 @@ public class RealP2PManager implements P2PManager{
                             listener.onTransferComplete(event.from(), file.toFile());
                         }
                     }
+                    case PEER_JOINED -> reportJoin(event.from());
+                    case PEER_LEFT -> reportLeft(event.from());
+                    case NOTICE -> System.out.println("[P2P notice] " + event.from() + ": " + event.message());
                 }
             },
-            (peerId, reason) -> {
-                System.err.println("P2P notice [" + peerId + "]: " + reason);
-            }
+            (peerId, reason) -> System.err.println("[P2P error] " + peerId + ": " + reason)
         );
     }
 
-    private void startMemberMonitor(){
-        if (memberMonitor != null) {
-            return;
+    /** 加入既有 group 時，已在房裡的人不觸發 PEER_JOINED，要主動補抓 */
+    private void reportInitialMembers() {
+        if (group == null) return;
+        for (String member : group.showMembers()) {
+            reportJoin(member);
         }
-        memberMonitor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "p2p-member-monitor");
-            t.setDaemon(true);
-            return t;
-        });
-        memberMonitor.scheduleAtFixedRate(this::checkMembers, 0, 1, TimeUnit.SECONDS);
     }
 
-    private void checkMembers(){
-        try{
-            if (group == null) return;
-            Set<String> current = group.showMembers();
+    private void reportJoin(String peer) {
+        if (peer == null || peer.isBlank() || peer.equals(localName)) return;
+        if (reportedPeers.add(peer)) {   // add 回傳 true = 原本沒有，才通知
+            if (listener != null) listener.onPeerJoined(peer);
+        }
+    }
 
-            for (String m : current){
-                if (!knownMembers.contains(m) && !m.equals(localName)){
-                    knownMembers.add(m);
-                    if (listener != null) {
-                        listener.onPeerJoined(m);
-                    }
-                }
-                Set<String> gone = new HashSet<>(knownMembers);
-                gone.removeAll(current);
-                for (String g : gone){
-                    knownMembers.remove(g);
-                    if (listener != null) {
-                        listener.onPeerLeft(g);
-                    }
-                }
-            }
-        }catch (Exception ex){
+    private void reportLeft(String peer) {
+        if (peer == null) return;
+        if (reportedPeers.remove(peer)) {
+            latestOfferByPeer.remove(peer);
+            if (listener != null) listener.onPeerLeft(peer);
         }
     }
 
     @Override
     public void disconnect() {
-        if (memberMonitor != null) {
-            memberMonitor.shutdownNow();
-            memberMonitor = null;
+        for (String peer : new HashSet<>(reportedPeers)) {
+            if (listener != null) listener.onPeerLeft(peer);
         }
+        reportedPeers.clear();
+        latestOfferByPeer.clear();
 
-        for (String peer : new HashSet<>(knownMembers)) {
-            if (listener != null) {
-                listener.onPeerLeft(peer);
+        if (p2p != null) {
+            try {
+                p2p.close();
+            } catch (Exception ex) {
+                // ignore
             }
-            knownMembers.clear();
-            latestOfferByPeer.clear();
-
-            if (p2p != null) {
-                try{
-                    p2p.close();
-                } catch (Exception ex) {
-                }
-                p2p = null;
-                group = null;
-            }
+            p2p = null;
+            group = null;
         }
+    }
 
-        @Override
-        public void sendText(String peerName, String text) {
-            if (group != null) {
-                return;
-            }
-            try{
-                group.send(text, null, peerName);
-            }catch (Exception ex){
-                ex.addSuppressed(ex);
-            }
+    @Override
+    public void sendText(String peerName, String text) {
+        if (group == null) return;
+        try {
+            group.send(text, null, peerName);
+        } catch (Exception ex) {
+            ex.printStackTrace();
         }
+    }
 
-        @Override
-        public void sendFile(String peerName, File file) {
-            if (group != null) {
-                return;
-            }
-            try{
-                group.send(file, null, peerName);
-            }catch (Exception ex){
-                ex.addSuppressed(ex);
-            }
+    @Override
+    public void sendFile(String peerName, File file) {
+        if (group == null) return;
+        try {
+            group.send(null, file.toPath(), peerName);
+        } catch (Exception ex) {
+            ex.printStackTrace();
         }
+    }
 
-        @Override
-        public void requestDownload(String peerName) {
-            String offer = latestOfferByPeer.get(peerName);
-            if (offer == null || group == null) {
-                System.err.println("[P2P] 找不到 " + peerName + " 的待下載 offer");
-            }
-            try{
-                group.save(offerId);
-            }catch (Exception ex){
-                ex.printStackTrace();
-            }
+    @Override
+    public void requestDownload(String peerName) {
+        String offerId = latestOfferByPeer.get(peerName);
+        if (offerId == null || group == null) {
+            System.err.println("[P2P] 找不到 " + peerName + " 的待下載 offer");
+            return;
+        }
+        try {
+            group.save(offerId);    // 後端背景下載，完成時觸發 FILE_SAVED
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
 }
