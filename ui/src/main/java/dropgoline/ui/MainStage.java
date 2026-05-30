@@ -30,6 +30,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
@@ -46,7 +47,7 @@ public class MainStage extends Stage implements P2PListener {
     public MainStage(P2PManager p2p) {
         this.p2p = p2p;
 
-        initStyle(StageStyle.UNDECORATED);
+        initStyle(StageStyle.TRANSPARENT);
 
         setTitle("DropGoLine");
         setWidth(500);
@@ -79,11 +80,19 @@ public class MainStage extends Stage implements P2PListener {
         root.setBottom(idLabel);
 
         Scene scene = new Scene(root);
+        scene.setFill(Color.TRANSPARENT);
         scene.getStylesheets().addAll(
             getClass().getResource("/styles/app.css").toExternalForm(),
             getClass().getResource("/styles/modern-card.css").toExternalForm()
         );
         setScene(scene);
+
+        setOnShown(e -> {
+            boolean acrylicOn = WindowsAcrylic.apply(getTitle());
+            if (acrylicOn){
+                getScene().getRoot().setStyle("-fx-background-color: rgba(30,30,30,0.55);");
+            }
+        });
 
         p2p.setListener(this);
     }
@@ -96,7 +105,7 @@ public class MainStage extends Stage implements P2PListener {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         Button closeBtn = new Button("✕");
-        closeBtn.getStyleClass().add("window-button");
+        closeBtn.getStyleClass().addAll("window-button", "close");
         closeBtn.setOnAction(e -> close());
 
         Button minBtn = new Button("-");
