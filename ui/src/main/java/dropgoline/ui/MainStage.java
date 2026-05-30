@@ -43,6 +43,7 @@ public class MainStage extends Stage implements P2PListener {
 
     private double dragOffsetX;
     private double dragOffsetY;
+    private boolean trayInstalled = false;
 
     public MainStage(P2PManager p2p) {
         this.p2p = p2p;
@@ -54,6 +55,8 @@ public class MainStage extends Stage implements P2PListener {
         setHeight(400);
 
         loadIcon();
+
+        trayInstalled = SystemTrayHelper.install(this, "/icons/app.png", "DropGoLine");
 
         HBox titleBar = buildTitleBar();
 
@@ -82,17 +85,11 @@ public class MainStage extends Stage implements P2PListener {
         Scene scene = new Scene(root);
         scene.setFill(Color.TRANSPARENT);
         scene.getStylesheets().addAll(
-            getClass().getResource("/styles/app.css").toExternalForm(),
-            getClass().getResource("/styles/modern-card.css").toExternalForm()
-        );
+                getClass().getResource("/styles/app.css").toExternalForm(),
+                getClass().getResource("/styles/modern-card.css").toExternalForm());
         setScene(scene);
 
-        setOnShown(e -> {
-            boolean acrylicOn = WindowsAcrylic.apply(getTitle());
-            if (acrylicOn){
-                getScene().getRoot().setStyle("-fx-background-color: rgba(30,30,30,0.55);");
-            }
-        });
+        setOnShown(e -> WindowsAcrylic.apply(this));
 
         p2p.setListener(this);
     }
@@ -106,7 +103,13 @@ public class MainStage extends Stage implements P2PListener {
 
         Button closeBtn = new Button("✕");
         closeBtn.getStyleClass().addAll("window-button", "close");
-        closeBtn.setOnAction(e -> close());
+        closeBtn.setOnAction(e -> {
+            if (trayInstalled) {
+                hide();
+            } else {
+                Platform.exit();
+            }
+        });
 
         Button minBtn = new Button("-");
         minBtn.getStyleClass().add("window-button");
@@ -177,7 +180,7 @@ public class MainStage extends Stage implements P2PListener {
         progressStage.show();
         p2p.requestDownload(peerName);
     }
-    
+
     private void copyToClipboard(String text) {
         Clipboard clipboard = Clipboard.getSystemClipboard();
         ClipboardContent content = new ClipboardContent();
@@ -214,7 +217,6 @@ public class MainStage extends Stage implements P2PListener {
             }
         });
     }
-
 
     @Override
     public void onFileOffer(String peerName, String fileName, long fileSize) {
