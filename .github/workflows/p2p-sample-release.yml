@@ -1,0 +1,201 @@
+name: Release p2p-sample
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "p2p-sample/**"
+      - ".github/workflows/p2p-sample-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-module:
+    name: Build module package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: p2p-sample
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Build server/module jar
+        run: mvn -B package -DskipTests
+
+      - name: Package module release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target/release-module
+          mkdir -p target/release-module/java-p2p-module
+          cp target/java-p2p.jar target/release-module/java-p2p-module/java-p2p.jar
+          cp README.md target/release-module/java-p2p-module/README.md
+          cat > target/release-module/java-p2p-module/RUN.md <<'EOF'
+          # Java P2P Module
+
+          Run signaling server:
+
+          ```bash
+          java -jar java-p2p.jar --server.port=18080
+          ```
+
+          This module/server package requires Java 17+.
+          The chat release package includes its own runtime.
+          EOF
+          cd target/release-module
+          zip -r ../java-p2p-module.zip java-p2p-module
+
+      - name: Upload module artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-p2p-module
+          path: p2p-sample/target/java-p2p-module.zip
+          if-no-files-found: error
+
+  build-chat:
+    name: Build chat package (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows
+            runner: windows-latest
+            archive: java-p2p-chat-windows.zip
+          - os: linux
+            runner: ubuntu-latest
+            archive: java-p2p-chat-linux.tar.gz
+    defaults:
+      run:
+        working-directory: p2p-sample
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Build chat classpath
+        run: mvn -B package dependency:copy-dependencies -DskipTests -DincludeScope=runtime -DoutputDirectory=target/release-work/deps
+
+      - name: Package Windows chat app
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = "java-p2p-chat"
+          $dist = "target/release-chat/$app"
+          New-Item -ItemType Directory -Force -Path "$dist/lib" | Out-Null
+          Copy-Item "target/java-p2p.jar.original" "$dist/lib/java-p2p-client.jar" -Force
+          Copy-Item "target/release-work/deps/*.jar" "$dist/lib" -Force
+          Copy-Item $env:JAVA_HOME "$dist/runtime" -Recurse -Force
+          @'
+          @echo off
+          setlocal
+          set APP_DIR=%~dp0
+          "%APP_DIR%runtime\bin\java.exe" -cp "%APP_DIR%lib\*" sample.chat.P2pChatCli %*
+          '@ | Set-Content -Encoding ASCII "$dist/java-p2p-chat.bat"
+          @'
+          # Java P2P Chat - Windows
+
+          Run:
+
+          ```powershell
+          .\java-p2p-chat.bat
+          ```
+
+          No system Java installation is required; this package includes a runtime.
+          '@ | Set-Content -Encoding UTF8 "$dist/README.md"
+          Compress-Archive -Path $dist -DestinationPath "target/java-p2p-chat-windows.zip" -Force
+
+      - name: Package Linux chat app
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="java-p2p-chat"
+          dist="target/release-chat/$app"
+          mkdir -p "$dist/lib"
+          cp target/java-p2p.jar.original "$dist/lib/java-p2p-client.jar"
+          cp target/release-work/deps/*.jar "$dist/lib/"
+          cp -a "$JAVA_HOME" "$dist/runtime"
+          cat > "$dist/java-p2p-chat" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          exec "$APP_DIR/runtime/bin/java" -cp "$APP_DIR/lib/*" sample.chat.P2pChatCli "$@"
+          EOF
+          chmod +x "$dist/java-p2p-chat"
+          cat > "$dist/README.md" <<'EOF'
+          # Java P2P Chat - Linux
+
+          Run:
+
+          ```bash
+          ./java-p2p-chat
+          ```
+
+          No system Java installation is required; this package includes a runtime.
+          EOF
+          tar -czf target/java-p2p-chat-linux.tar.gz -C target/release-chat "$app"
+
+      - name: Upload chat artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-p2p-chat-${{ matrix.os }}
+          path: p2p-sample/target/${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub releases
+    runs-on: ubuntu-latest
+    needs:
+      - build-module
+      - build-chat
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Publish separate module and chat releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+          module_tag="p2p-module-${short_sha}-${GITHUB_RUN_NUMBER}"
+          chat_tag="p2p-chat-${short_sha}-${GITHUB_RUN_NUMBER}"
+
+          module_asset="release-assets/java-p2p-module/java-p2p-module.zip"
+          windows_asset="release-assets/java-p2p-chat-windows/java-p2p-chat-windows.zip"
+          linux_asset="release-assets/java-p2p-chat-linux/java-p2p-chat-linux.tar.gz"
+
+          gh release create "$module_tag" "$module_asset" \
+            --target "$GITHUB_SHA" \
+            --title "P2P Module ${short_sha}" \
+            --notes "Core p2p-sample module/server build from ${GITHUB_SHA}."
+
+          gh release create "$chat_tag" "$windows_asset" "$linux_asset" \
+            --target "$GITHUB_SHA" \
+            --title "P2P Chat ${short_sha}" \
+            --notes "Standalone chat builds from ${GITHUB_SHA}. Windows and Linux packages include their own Java runtime."
