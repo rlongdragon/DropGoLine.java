@@ -99,23 +99,37 @@ public final class SystemTrayHelper {
         return mi;
     }
 
-    /** 從候選清單挑第一個系統有裝、能顯示中文的字體 */
-    private static Font pickMenuFont() {
-        String[] candidates = {
-            "Microsoft JhengHei",   // 微軟正黑體（繁中，Windows 標配）
-            "Microsoft YaHei",      // 微軟雅黑（簡中）
-            "PMingLiU", "MingLiU",  // 新細明體 / 細明體
-            "SimSun"
-        };
-        Set<String> available = new HashSet<>(Arrays.asList(
-            GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()));
-        for (String name : candidates) {
-            if (available.contains(name)) {
-                return new Font(name, Font.PLAIN, 12);
-            }
+/** 挑一個系統有裝、能顯示中文的字體 */
+private static Font pickMenuFont() {
+    GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+
+    // 同時收集「英文」與「系統預設語系」的字體名稱，避免名稱對不上
+    Set<String> available = new HashSet<>();
+    available.addAll(Arrays.asList(ge.getAvailableFontFamilyNames(java.util.Locale.ENGLISH)));
+    available.addAll(Arrays.asList(ge.getAvailableFontFamilyNames()));
+
+    String[] preferred = {
+        "Microsoft JhengHei", "微軟正黑體",
+        "Microsoft YaHei",    "微軟雅黑",
+        "PMingLiU",           "新細明體",
+        "MingLiU",            "細明體",
+        "SimSun",             "宋體"
+    };
+    for (String name : preferred) {
+        if (available.contains(name)) {
+            return new Font(name, Font.PLAIN, 12);
         }
-        return new Font(Font.SANS_SERIF, Font.PLAIN, 12);   // 都沒有才退回預設
     }
+
+    // 偏好清單都沒對到 → 掃描所有實體字體，挑第一個畫得出「中」的
+    for (Font f : ge.getAllFonts()) {
+        if (f.canDisplay('中')) {
+            return f.deriveFont(Font.PLAIN, 12f);
+        }
+    }
+
+    return new Font(Font.SANS_SERIF, Font.PLAIN, 12);   // 真的都沒有才退回
+}
 
     private static void showStage(Stage stage) {
         Platform.runLater(() -> {
