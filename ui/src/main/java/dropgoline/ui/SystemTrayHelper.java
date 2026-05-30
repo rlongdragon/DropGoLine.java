@@ -1,31 +1,37 @@
 package dropgoline.ui;
 
 import java.awt.AWTException;
-import java.awt.EventQueue;
-import java.awt.Font;
-import java.awt.GraphicsEnvironment;
 import java.awt.Image;
-import java.awt.Menu;
-import java.awt.MenuItem;
-import java.awt.PopupMenu;
 import java.awt.SystemTray;
 import java.awt.Toolkit;
 import java.awt.TrayIcon;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+
+import javax.swing.SwingUtilities;
 
 import javafx.application.Platform;
+import javafx.scene.Scene;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Menu;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.layout.Pane;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
 
-/** 系統匣常駐圖示與右鍵選單。 */
+/**
+ * 系統匣常駐圖示。右鍵選單用 JavaFX ContextMenu 繪製，
+ * 因為 AWT 原生選單在中文 Windows 上會顯示成框框。
+ */
 public final class SystemTrayHelper {
 
     private SystemTrayHelper() {}
 
     private static TrayIcon trayIcon;
-    private static MenuItem idItem;
-    private static final Font MENU_FONT = pickMenuFont();   // 有中文字符的字體
+    private static Stage anchorStage;              // 隱形視窗，給 ContextMenu 當 owner
+    private static volatile String currentId = "-";
 
     public static boolean install(Stage stage, String iconResourcePath, String tooltip) {
         if (!SystemTray.isSupported()) {
@@ -38,46 +44,29 @@ public final class SystemTrayHelper {
             Image image = Toolkit.getDefaultToolkit().getImage(
                     SystemTrayHelper.class.getResource(iconResourcePath));
 
-            PopupMenu popup = new PopupMenu();
-            popup.setFont(MENU_FONT);
+            // 不掛 AWT PopupMenu，改自己處理滑鼠事件
+            trayIcon = new TrayIcon(image, tooltip);
+            trayIcon.setImageAutoSize(true);
 
-            // ID 顯示（不可點）
-            idItem = item("ID: -");
-            idItem.setEnabled(false);
-            popup.add(idItem);
-            popup.addSeparator();
-
-            MenuItem openItem = item("開啟拖曳板");
-            openItem.addActionListener(e -> showStage(stage));
-
-            MenuItem closeItem = item("關閉拖曳板");
-            closeItem.addActionListener(e -> Platform.runLater(stage::hide));
-
-            Menu settingsMenu = new Menu("設定");
-            settingsMenu.setFont(MENU_FONT);
-            MenuItem openSettings = item("其他設定…");
-            openSettings.addActionListener(e ->
-                    Platform.runLater(() -> new SettingsStage().show()));
-            settingsMenu.add(openSettings);
-
-            MenuItem exitItem = item("結束");
-            exitItem.addActionListener(e -> {
-                SystemTray.getSystemTray().remove(trayIcon);
-                Platform.runLater(Platform::exit);
+            trayIcon.addMouseListener(new MouseAdapter() {
+                @Override public void mousePressed(MouseEvent e)  { maybePopup(e); }
+                @Override public void mouseReleased(MouseEvent e) { maybePopup(e); }
+                @Override public void mouseClicked(MouseEvent e) {
+                    if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 2) {
+                        showStage(stage);                 // 雙擊左鍵 → 還原視窗
+                    }
+                }
+                private void maybePopup(MouseEvent e) {
+                    if (e.isPopupTrigger()) {             // 右鍵 → 彈出 JavaFX 選單
+                        int x = e.getXOnScreen();
+                        int y = e.getYOnScreen();
+                        Platform.runLater(() -> showFxMenu(stage, x, y));
+                    }
+                }
             });
 
-            popup.add(openItem);
-            popup.add(closeItem);
-            popup.add(settingsMenu);
-            popup.addSeparator();
-            popup.add(exitItem);
-
-            trayIcon = new TrayIcon(image, tooltip, popup);
-            trayIcon.setImageAutoSize(true);
-            trayIcon.addActionListener(e -> showStage(stage));
-
             SystemTray.getSystemTray().add(trayIcon);
-            System.out.println("[Tray] 系統匣已建立，選單字體 = " + MENU_FONT.getFamily());
+            System.out.println("[Tray] 系統匣圖示已建立");
             return true;
 
         } catch (AWTException | RuntimeException ex) {
@@ -86,50 +75,67 @@ public final class SystemTrayHelper {
         }
     }
 
+    /** 更新選單裡顯示的 ID（由 MainStage.onIdChanged 呼叫）。 */
     public static void updateId(String id) {
-        if (idItem != null) {
-            EventQueue.invokeLater(() -> idItem.setLabel("ID: " + id));
-        }
+        currentId = (id == null || id.isBlank()) ? "-" : id;
     }
 
-    /** 建立已套用中文字體的 MenuItem */
-    private static MenuItem item(String label) {
-        MenuItem mi = new MenuItem(label);
-        mi.setFont(MENU_FONT);
-        return mi;
+    // ===== 以下都在 JavaFX 執行緒上執行 =====
+
+    private static void showFxMenu(Stage stage, double screenX, double screenY) {
+        ensureAnchor();
+        ContextMenu menu = buildMenu(stage);
+        menu.show(anchorStage, screenX, screenY);
     }
 
-/** 挑一個系統有裝、能顯示中文的字體 */
-private static Font pickMenuFont() {
-    GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+    private static ContextMenu buildMenu(Stage stage) {
+        MenuItem idItem = new MenuItem("ID: " + currentId);
+        idItem.setDisable(true);
 
-    // 同時收集「英文」與「系統預設語系」的字體名稱，避免名稱對不上
-    Set<String> available = new HashSet<>();
-    available.addAll(Arrays.asList(ge.getAvailableFontFamilyNames(java.util.Locale.ENGLISH)));
-    available.addAll(Arrays.asList(ge.getAvailableFontFamilyNames()));
+        MenuItem openItem = new MenuItem("開啟拖曳板");
+        openItem.setOnAction(e -> showStage(stage));
 
-    String[] preferred = {
-        "Microsoft JhengHei", "微軟正黑體",
-        "Microsoft YaHei",    "微軟雅黑",
-        "PMingLiU",           "新細明體",
-        "MingLiU",            "細明體",
-        "SimSun",             "宋體"
-    };
-    for (String name : preferred) {
-        if (available.contains(name)) {
-            return new Font(name, Font.PLAIN, 12);
-        }
+        MenuItem closeItem = new MenuItem("關閉拖曳板");
+        closeItem.setOnAction(e -> stage.hide());
+
+        Menu settingsMenu = new Menu("設定");
+        MenuItem openSettings = new MenuItem("其他設定…");
+        openSettings.setOnAction(e -> new SettingsStage().show());
+        settingsMenu.getItems().add(openSettings);
+
+        MenuItem exitItem = new MenuItem("結束");
+        exitItem.setOnAction(e -> {
+            if (trayIcon != null) {
+                SystemTray.getSystemTray().remove(trayIcon);
+            }
+            Platform.exit();
+        });
+
+        return new ContextMenu(
+                idItem, new SeparatorMenuItem(),
+                openItem, closeItem, settingsMenu,
+                new SeparatorMenuItem(), exitItem);
     }
 
-    // 偏好清單都沒對到 → 掃描所有實體字體，挑第一個畫得出「中」的
-    for (Font f : ge.getAllFonts()) {
-        if (f.canDisplay('中')) {
-            return f.deriveFont(Font.PLAIN, 12f);
-        }
-    }
+    /** 隱形的小視窗，純粹當 ContextMenu 的 owner（彈出選單需要一個 owner window）。 */
+    private static void ensureAnchor() {
+        if (anchorStage != null) return;
+        anchorStage = new Stage();
+        anchorStage.initStyle(StageStyle.UTILITY);   // 不顯示在工作列
+        anchorStage.setOpacity(0);                    // 完全透明
+        anchorStage.setWidth(1);
+        anchorStage.setHeight(1);
+        anchorStage.setX(-3000);                      // 移出畫面
+        anchorStage.setY(-3000);
+        anchorStage.setAlwaysOnTop(true);
 
-    return new Font(Font.SANS_SERIF, Font.PLAIN, 12);   // 真的都沒有才退回
-}
+        Scene scene = new Scene(new Pane(), 1, 1);
+        scene.setFill(Color.TRANSPARENT);
+        scene.getStylesheets().add(
+                SystemTrayHelper.class.getResource("/styles/app.css").toExternalForm());
+        anchorStage.setScene(scene);
+        anchorStage.show();
+    }
 
     private static void showStage(Stage stage) {
         Platform.runLater(() -> {
