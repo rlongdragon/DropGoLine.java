@@ -172,4 +172,24 @@ public class RealP2PManager implements P2PManager {
             ex.printStackTrace();
         }
     }
+
+    @Override
+    public void broadcastText(String text) {
+        if (group == null) return;
+        try {
+            group.send(text);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    @Override
+    public void broadcastFile(File file) {
+        if (group == null) return;
+        try {
+            group.send(file.toPath());
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
 }

@@ -22,6 +22,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
@@ -39,7 +40,6 @@ public class MainStage extends Stage implements P2PListener {
     private final FlowPane cardPane;
     private final Map<String, ModernCard> cards = new HashMap<>();
     private final Map<String, ProgressStage> activeProgress = new HashMap<>();
-    private final Label idLabel;
 
     private double dragOffsetX;
     private double dragOffsetY;
@@ -56,31 +56,27 @@ public class MainStage extends Stage implements P2PListener {
 
         loadIcon();
 
-        trayInstalled = SystemTrayHelper.install(this, "/icons/app.png", "DropGoLine");
+        trayInstalled = SystemTrayHelper.install(this, "/icons/app.png", "DropGoLine", this::handleConnect, p2p::disconnect);
 
-        HBox titleBar = buildTitleBar();
-
-        MenuBar menuBar = buildMenuBar();
-
-        VBox topArea = new VBox(titleBar, menuBar);
+        HBox topBar = buildTopBar();
 
         cardPane = new FlowPane();
         cardPane.setHgap(12);
         cardPane.setVgap(12);
         cardPane.setPadding(new Insets(15));
 
+        SendCard sendCard = new SendCard(
+            files -> files.forEach(p2p::broadcastFile),
+            p2p::broadcastText
+        );
+        cardPane.getChildren().add(sendCard);
+
         ScrollPane scrollPane = new ScrollPane(cardPane);
         scrollPane.setFitToWidth(true);
 
-        idLabel = new Label("ID: -");
-        idLabel.getStyleClass().add("id-label");
-        idLabel.setPadding(new Insets(4, 10, 4, 10));
-        idLabel.setMaxWidth(Double.MAX_VALUE);
-
         BorderPane root = new BorderPane();
-        root.setTop(topArea);
+        root.setTop(topBar);
         root.setCenter(scrollPane);
-        root.setBottom(idLabel);
 
         Scene scene = new Scene(root);
         scene.setFill(Color.TRANSPARENT);
@@ -89,19 +85,18 @@ public class MainStage extends Stage implements P2PListener {
                 getClass().getResource("/styles/modern-card.css").toExternalForm());
         setScene(scene);
 
+        ResizeHelper.install(this);
+
         setOnShown(e -> WindowsAcrylic.apply(this));
 
         p2p.setListener(this);
     }
 
-    private HBox buildTitleBar() {
-        Label titleLabel = new Label("DropGoLine");
-        titleLabel.getStyleClass().add("title-text");
-
+    private HBox buildTopBar() {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Button closeBtn = new Button("✕");
+        Button closeBtn = new Button("\u2715");
         closeBtn.getStyleClass().addAll("window-button", "close");
         closeBtn.setOnAction(e -> {
             if (trayInstalled) {
@@ -111,25 +106,41 @@ public class MainStage extends Stage implements P2PListener {
             }
         });
 
-        Button minBtn = new Button("-");
+        Button minBtn = new Button("\u2013");
         minBtn.getStyleClass().add("window-button");
         minBtn.setOnAction(e -> setIconified(true));
 
-        HBox titleBar = new HBox(titleLabel, spacer, minBtn, closeBtn);
-        titleBar.getStyleClass().add("title-bar");
-        titleBar.setAlignment(Pos.CENTER_LEFT);
-        titleBar.setMinHeight(30);
-
-        titleBar.setOnMousePressed(e -> {
+        HBox bar = new HBox(spacer, minBtn, closeBtn);
+        bar.getStyleClass().add("top-bar");
+        bar.setMinHeight(28);
+        bar.setPickOnBounds(true);
+        bar.setOnMousePressed(e -> {
             dragOffsetX = e.getSceneX();
             dragOffsetY = e.getSceneY();
         });
-        titleBar.setOnMouseDragged(e -> {
+        bar.setOnMouseDragged(e -> {
             setX(e.getScreenX() - dragOffsetX);
             setY(e.getScreenY() - dragOffsetY);
         });
+        return bar;
+    }
 
-        return titleBar;
+    private HBox buildStatusBar() {
+        ImageView iconView = new ImageView();
+        try (InputStream in = getClass().getResourceAsStream("/icons/app.png")){
+            if (in != null){
+                iconView.setImage(new Image(in, 18, 18, true, true));
+            }
+        }catch (Exception ignored){
+        }
+
+        MenuBar menuBar = buildMenuBar();
+
+        HBox bar = new HBox(8, iconView, menuBar);
+        bar.getStyleClass().add("status-bar");
+        bar.setPadding(new Insets(2, 8, 2, 6));
+        bar.setMinHeight(30);
+        return bar;
     }
 
     private void loadIcon() {
@@ -191,7 +202,7 @@ public class MainStage extends Stage implements P2PListener {
 
     @Override
     public void onIdChanged(String id) {
-        Platform.runLater(() -> idLabel.setText("ID: " + id));
+        SystemTrayHelper.updateId(id);
     }
 
     @Override

@@ -14,4 +14,8 @@ public interface P2PManager {
     void requestDownload(String peerName);
 
     void setListener(P2PListener listener);
+
+    void broadcastText(String text);
+
+    void broadcastFile(File file);
 }

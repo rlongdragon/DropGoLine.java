@@ -1,23 +1,6 @@
-/* =========================================================
-   DropGoLine 深色主題
-   ========================================================= */
-
-/* ---- 視窗底色 ---- */
 .root {
     -fx-background-color: #232323;
 }
-
-/* ---- 自訂標題列 ---- */
-.title-bar {
-    -fx-background-color: #1a1a1a;
-}
-.title-text {
-    -fx-text-fill: white;
-    -fx-font-weight: bold;
-    -fx-font-size: 13px;
-    -fx-padding: 0 0 0 6px;
-}
-
 /* ---- 視窗按鈕（縮小 / 關閉）---- */
 .button.window-button {
     -fx-background-color: transparent;
@@ -49,8 +32,8 @@
 
 /* ---- 選單列 ---- */
 .menu-bar {
-    -fx-background-color: #1a1a1a;
-    -fx-padding: 0 4 0 4;
+    -fx-background-color: transparent;
+    -fx-padding: 0;
 }
 .menu-bar > .container > .menu-button > .label {
     -fx-text-fill: #e0e0e0;
@@ -83,14 +66,6 @@
 .menu-item:hovered .label {
     -fx-text-fill: white;
 }
-
-/* ---- 底部 ID 標籤 ---- */
-.id-label {
-    -fx-background-color: #1a1a1a;
-    -fx-text-fill: #cccccc;
-    -fx-font-size: 11px;
-}
-
 /* ---- 一般文字 ---- */
 .label {
     -fx-text-fill: #e8e8e8;
@@ -159,4 +134,34 @@
 .scroll-bar .increment-arrow,
 .scroll-bar .decrement-arrow {
     -fx-padding: 0;
+}
+/* 頂部透明拖曳列 */
+.top-bar {
+    -fx-background-color: transparent;
+}
+
+/* 底部狀態列：透明 + 上邊框跟卡片區分隔 */
+.status-bar {
+    -fx-background-color: transparent;
+    -fx-border-color: rgba(255, 255, 255, 0.08);
+    -fx-border-width: 1 0 0 0;
+}
+
+/* 傳送卡片 */
+.send-card {
+    -fx-background-color: rgba(255, 255, 255, 0.04);
+    -fx-background-radius: 10;
+    -fx-border-color: rgba(255, 255, 255, 0.22);
+    -fx-border-width: 1.5;
+    -fx-border-radius: 10;
+    -fx-padding: 18;
+}
+.send-card:hover,
+.send-card.drag-over {
+    -fx-border-color: #4a90e2;
+    -fx-background-color: rgba(74, 144, 226, 0.12);
+}
+.send-card-label {
+    -fx-text-fill: #cfcfcf;
+    -fx-font-size: 13px;
 }

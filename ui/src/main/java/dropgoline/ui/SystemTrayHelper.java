@@ -21,19 +21,22 @@ import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
-/**
- * 系統匣常駐圖示。右鍵選單用 JavaFX ContextMenu 繪製，
- * 因為 AWT 原生選單在中文 Windows 上會顯示成框框。
- */
 public final class SystemTrayHelper {
 
-    private SystemTrayHelper() {}
+    private SystemTrayHelper() {
+    }
 
     private static TrayIcon trayIcon;
-    private static Stage anchorStage;              // 隱形視窗，給 ContextMenu 當 owner
+    private static Stage anchorStage;
     private static volatile String currentId = "-";
+    private static Runnable onConnect;
+    private static Runnable onDisconnect;
 
-    public static boolean install(Stage stage, String iconResourcePath, String tooltip) {
+    public static boolean install(Stage stage, String iconResourcePath, String tooltip, Runnable connectAction,
+                                  Runnable disconnectAction) {
+        onConnect = connectAction;
+        onDisconnect = disconnectAction;
+
         if (!SystemTray.isSupported()) {
             System.out.println("[Tray] 此系統不支援系統匣");
             return false;
@@ -49,15 +52,25 @@ public final class SystemTrayHelper {
             trayIcon.setImageAutoSize(true);
 
             trayIcon.addMouseListener(new MouseAdapter() {
-                @Override public void mousePressed(MouseEvent e)  { maybePopup(e); }
-                @Override public void mouseReleased(MouseEvent e) { maybePopup(e); }
-                @Override public void mouseClicked(MouseEvent e) {
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    maybePopup(e);
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    maybePopup(e);
+                }
+
+                @Override
+                public void mouseClicked(MouseEvent e) {
                     if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 2) {
-                        showStage(stage);                 // 雙擊左鍵 → 還原視窗
+                        showStage(stage); // 雙擊左鍵 → 還原視窗
                     }
                 }
+
                 private void maybePopup(MouseEvent e) {
-                    if (e.isPopupTrigger()) {             // 右鍵 → 彈出 JavaFX 選單
+                    if (e.isPopupTrigger()) { // 右鍵 → 彈出 JavaFX 選單
                         int x = e.getXOnScreen();
                         int y = e.getYOnScreen();
                         Platform.runLater(() -> showFxMenu(stage, x, y));
@@ -75,12 +88,9 @@ public final class SystemTrayHelper {
         }
     }
 
-    /** 更新選單裡顯示的 ID（由 MainStage.onIdChanged 呼叫）。 */
     public static void updateId(String id) {
         currentId = (id == null || id.isBlank()) ? "-" : id;
     }
-
-    // ===== 以下都在 JavaFX 執行緒上執行 =====
 
     private static void showFxMenu(Stage stage, double screenX, double screenY) {
         ensureAnchor();
@@ -99,9 +109,24 @@ public final class SystemTrayHelper {
         closeItem.setOnAction(e -> stage.hide());
 
         Menu settingsMenu = new Menu("設定");
+
+        MenuItem connectItem = new MenuItem("建立連線");
+        connectItem.setOnAction(e -> {
+            if (onConnect != null)
+                onConnect.run();
+        });
+
+        MenuItem disconnectItem = new MenuItem("斷開連線");
+        disconnectItem.setOnAction(e -> {
+            if (onDisconnect != null)
+                onDisconnect.run();
+        });
+
         MenuItem openSettings = new MenuItem("其他設定…");
         openSettings.setOnAction(e -> new SettingsStage().show());
-        settingsMenu.getItems().add(openSettings);
+
+        settingsMenu.getItems().addAll(
+                connectItem, disconnectItem, new SeparatorMenuItem(), openSettings);
 
         MenuItem exitItem = new MenuItem("結束");
         exitItem.setOnAction(e -> {
@@ -117,15 +142,15 @@ public final class SystemTrayHelper {
                 new SeparatorMenuItem(), exitItem);
     }
 
-    /** 隱形的小視窗，純粹當 ContextMenu 的 owner（彈出選單需要一個 owner window）。 */
     private static void ensureAnchor() {
-        if (anchorStage != null) return;
+        if (anchorStage != null)
+            return;
         anchorStage = new Stage();
-        anchorStage.initStyle(StageStyle.UTILITY);   // 不顯示在工作列
-        anchorStage.setOpacity(0);                    // 完全透明
+        anchorStage.initStyle(StageStyle.UTILITY); // 不顯示在工作列
+        anchorStage.setOpacity(0); // 完全透明
         anchorStage.setWidth(1);
         anchorStage.setHeight(1);
-        anchorStage.setX(-3000);                      // 移出畫面
+        anchorStage.setX(-3000); // 移出畫面
         anchorStage.setY(-3000);
         anchorStage.setAlwaysOnTop(true);
 

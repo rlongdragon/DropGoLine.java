@@ -19,7 +19,8 @@ public class MockP2PManager implements P2PManager {
     @Override
     public void connect(String code) {
         System.out.println("[Mock] connect: " + code);
-        if (peers.contains(code)) return;
+        if (peers.contains(code))
+            return;
         peers.add(code);
 
         if (listener != null) {
@@ -29,12 +30,18 @@ public class MockP2PManager implements P2PManager {
 
         // 開背景執行緒模擬：1.5s 後傳歡迎訊息、2.5s 後傳檔案邀請
         new Thread(() -> {
-            try { Thread.sleep(1500); } catch (InterruptedException ex) {}
+            try {
+                Thread.sleep(1500);
+            } catch (InterruptedException ex) {
+            }
             if (listener != null && peers.contains(code)) {
                 listener.onMessageReceived(code, "嗨，我是 " + code + "！");
             }
 
-            try { Thread.sleep(1000); } catch (InterruptedException ex) {}
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException ex) {
+            }
             if (listener != null && peers.contains(code)) {
                 listener.onFileOffer(code, "example.zip", 1_500_000);
             }
@@ -80,9 +87,8 @@ public class MockP2PManager implements P2PManager {
 
                 // 建立一個真實的 temp 檔（讓拖到 Explorer 後真的能複製出去）
                 File tempFile = new File(
-                    System.getProperty("java.io.tmpdir"),
-                    "DropGoLine_" + System.currentTimeMillis() + ".txt"
-                );
+                        System.getProperty("java.io.tmpdir"),
+                        "DropGoLine_" + System.currentTimeMillis() + ".txt");
                 try (FileWriter fw = new FileWriter(tempFile)) {
                     fw.write("Mock 下載完成的內容\n來自 peer: " + peerName);
                 }
@@ -94,5 +100,15 @@ public class MockP2PManager implements P2PManager {
                 ex.printStackTrace();
             }
         }).start();
+    }
+
+    @Override
+    public void broadcastText(String text) {
+        System.out.println("[Mock] 廣播文字：" + text);
+    }
+
+    @Override
+    public void broadcastFile(File file) {
+        System.out.println("[Mock] 廣播檔案：" + file.getName());
     }
 }
