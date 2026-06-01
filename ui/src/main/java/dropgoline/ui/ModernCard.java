@@ -15,6 +15,7 @@ import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressBar;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.image.Image;
@@ -34,10 +35,24 @@ public class ModernCard extends StackPane {
 
     private String dragText = null;
     private File dragFile = null;
+    private String pendingOfferId;
 
     private MenuItem downloadItem;
     private Runnable onDownloadRequest;
     private Runnable onHistoryRequest;
+    private java.util.function.Consumer<File> onFileDropped;
+
+    public void setOnFileDropped(java.util.function.Consumer<File> handler) {
+        this.onFileDropped = handler;
+    }
+    
+
+    public void setPendingFile(String Id) {
+        this.pendingOfferId = Id;
+    }
+
+    public String getPendingOfferId() { return pendingOfferId; }
+
 
     public ModernCard(String name) {
         this.peername = name;
@@ -101,41 +116,92 @@ public class ModernCard extends StackPane {
             event.consume();
         });
 
+        setOnDragOver(event -> {
+            if (event.getGestureSource() != this && (event.getDragboard().hasFiles() || event.getDragboard().hasString())) {
+            event.acceptTransferModes(TransferMode.COPY_OR_MOVE);
+        }
+            getStyleClass().add("drag-over"); // 如果你有定義 CSS 樣式
+            event.consume();
+        });
+
         setOnDragExited(event -> {
             getStyleClass().remove("drag-over");
             event.consume();
         });
 
-        setOnDragDropped(event -> {
-            Dragboard db = event.getDragboard();
-            boolean success = false;
+        // setOnDragDropped(event -> {
+        //     Dragboard db = event.getDragboard();
+        //     if (db.hasFiles()) {
+        //         File file = db.getFiles().get(0);
+                
+        //         if (onFileDropped != null) {
+        //             onFileDropped.accept(file);
+        //         }
+                
+        //         event.setDropCompleted(true);
+        //     }
+        //     getStyleClass().remove("drag-over");
+        //     event.consume();
+        // });
 
-            if (db.hasFiles()) {
-                setFile(db.getFiles().get(0));
-                success = true;
-            } else if (db.hasString()) {
-                setText(db.getString());
+        setOnDragDropped(event -> {
+        Dragboard db = event.getDragboard();
+        boolean success = false;
+
+        if (db.hasFiles()) {
+            File file = db.getFiles().get(0);
+            if (onFileDropped != null) {
+                onFileDropped.accept(file);
                 success = true;
             }
-            event.setDropCompleted(success);
-            getStyleClass().remove("drag-over");
-            event.consume();
-        });
+        } 
+        // 【新增】：處理文字拖曳
+        else if (db.hasString()) {
+            String text = db.getString();
+            if (onTextDropped != null) {
+                onTextDropped.accept(text);
+                success = true;
+            }
+        }
+
+        event.setDropCompleted(success);
+        getStyleClass().remove("drag-over");
+        event.consume();
+    });
+        
+
+    }
+
+    private java.util.function.Consumer<String> onTextDropped;
+
+    public void setOnTextDropped(java.util.function.Consumer<String> handler) {
+        this.onTextDropped = handler;
     }
 
     private void setupDragSource() {
         setOnDragDetected(event -> {
-            ClipboardContent content = new ClipboardContent();
-            if (dragFile != null) {
-                content.putFiles(List.of(dragFile));
-            } else if (dragText != null && !dragText.isEmpty()) {
-                content.putString(dragText);
-            } else {
+            if ((dragFile != null && dragFile.exists()) || (dragText != null && !dragText.isEmpty())) {
+                Dragboard db = this.startDragAndDrop(TransferMode.COPY);
+                ClipboardContent content = new ClipboardContent();
+
+                // 如果有檔案，放檔案；如果有文字，放文字
+                if (dragFile != null && dragFile.exists()) {
+                    content.putFiles(java.util.Collections.singletonList(dragFile));
+                } else if (dragText != null) {
+                    content.putString(dragText);
+                }
+                
+                db.setContent(content);
                 event.consume();
-                return;
             }
-            Dragboard db = startDragAndDrop(TransferMode.COPY);
-            db.setContent(content);
+        });
+
+        setOnDragDone(event -> {
+            if (event.getTransferMode() == TransferMode.COPY) {
+                // 文字拖走後，清空 UI
+                this.setText("尚無訊息");
+                this.dragText = null;
+            }
             event.consume();
         });
     }

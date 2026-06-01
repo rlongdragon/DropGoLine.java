@@ -1,17 +1,38 @@
 package dropgoline.net;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import p2p.transfer.FileTransferService;
+import p2p.transfer.FileTransferProtocol;
+import p2p.transfer.ChecksumService;
 
 import p2p.api.P2p;
 import p2p.api.P2pSessionInstance;
+import p2p.quic.QuicChannel;
+import dropgoline.historyservice.HistoryManager;
 
 public class RealP2PManager implements P2PManager {
+  
+    
+
+
+    private final Map<String, QuicChannel> peerChannels = new ConcurrentHashMap<>();
+
+    // 這裡是正確的：在類別裡面
+    public QuicChannel getChannel(String peerName) {
+        return peerChannels.get(peerName);
+    }
+
+    // 這裡是正確的：在類別裡面
+    public void registerChannel(String peerName, QuicChannel channel) {
+        peerChannels.put(peerName, channel);
+    }//
 
     private final String localName;
     private final String signalingUrl;
@@ -26,6 +47,8 @@ public class RealP2PManager implements P2PManager {
 
     // 已回報給 UI 的 peer，避免重複觸發 onPeerJoined
     private final Set<String> reportedPeers = ConcurrentHashMap.newKeySet();
+
+    
 
     public RealP2PManager(String localName, String signalingUrl, Path downloadDir) {
         this.localName = localName;
@@ -72,6 +95,7 @@ public class RealP2PManager implements P2PManager {
             event -> {
                 switch (event.type()) {
                     case MESSAGE -> {
+                        HistoryManager.getInstance().addHistory(event.from(), event.message(), true, "TEXT");
                         if (listener != null) {
                             listener.onMessageReceived(event.from(), event.message());
                         }
@@ -85,6 +109,7 @@ public class RealP2PManager implements P2PManager {
                     case FILE_SAVED -> {
                         Path file = event.file();
                         if (file != null && listener != null) {
+                            HistoryManager.getInstance().addHistory(event.from(), file.toString(), true, "FILE");
                             listener.onTransferComplete(event.from(), file.toFile());
                         }
                     }
@@ -151,12 +176,27 @@ public class RealP2PManager implements P2PManager {
 
     @Override
     public void sendFile(String peerName, File file) {
-        if (group == null) return;
+        if (group == null) {
+            System.err.println("錯誤：P2P 群組尚未連線，無法傳送檔案。");
+            return;
+        }
+        
+        // 使用原本的 API 傳送檔案
         try {
-            group.send(null, file.toPath(), peerName);
+            group.send(null,file.toPath(), peerName);
+            group.send("Hello Jerry", null, "jerry");
+            System.out.println("已呼叫 API 傳送檔案給: " + peerName);
         } catch (Exception ex) {
+            System.err.println("傳送檔案時發生異常: " + ex.getMessage());
             ex.printStackTrace();
         }
+
+        // if (group == null) return;
+        // try {
+        //     group.send(null, file.toPath(), peerName);
+        // } catch (Exception ex) {
+        //     ex.printStackTrace();
+        // }
     }
 
     @Override

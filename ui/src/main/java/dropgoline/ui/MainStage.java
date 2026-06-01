@@ -6,9 +6,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import p2p.transfer.FileTransferService;
+import p2p.transfer.FileTransferProtocol;
+import p2p.transfer.ChecksumService;
+import p2p.quic.QuicChannel;
+import java.nio.file.Path;
+
 import dropgoline.net.P2PListener;
 import dropgoline.net.P2PManager;
 import dropgoline.settings.AppSettings;
+import dropgoline.model.HistoryItem;
+import dropgoline.historyservice.HistoryManager;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -21,6 +29,7 @@ import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.TextField;
 import javafx.scene.image.Image;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
@@ -40,13 +49,23 @@ public class MainStage extends Stage implements P2PListener {
     private final Map<String, ModernCard> cards = new HashMap<>();
     private final Map<String, ProgressStage> activeProgress = new HashMap<>();
     private final Label idLabel;
+    private final FileTransferService transferService;
+    private File lastReceivedFile;
+    
 
+    private final Map<String,File> pendingFiles = new HashMap<>();
+    private final Map<String, File> receivedFilesById = new HashMap<>(); 
     private double dragOffsetX;
     private double dragOffsetY;
     private boolean trayInstalled = false;
+    
 
     public MainStage(P2PManager p2p) {
         this.p2p = p2p;
+
+        ChecksumService checksumService = new ChecksumService();
+        FileTransferProtocol protocol = new FileTransferProtocol(checksumService);
+        this.transferService = new FileTransferService(protocol);
 
         initStyle(StageStyle.TRANSPARENT);
 
@@ -110,6 +129,7 @@ public class MainStage extends Stage implements P2PListener {
                 Platform.exit();
             }
         });
+    
 
         Button minBtn = new Button("-");
         minBtn.getStyleClass().add("window-button");
@@ -167,7 +187,9 @@ public class MainStage extends Stage implements P2PListener {
     }
 
     private void openHistoryFor(String peerName) {
-        HistoryStage history = new HistoryStage(peerName, List.of());
+        List<HistoryItem> items = HistoryManager.getInstance().getHistory(peerName);
+        System.out.println("[DEBUG] 讀取的歷史紀錄筆數: " + items.size());
+        HistoryStage history = new HistoryStage(peerName, items);
         history.show();
     }
 
@@ -206,15 +228,65 @@ public class MainStage extends Stage implements P2PListener {
 
     @Override
     public void onMessageReceived(String peerName, String text) {
+               
         Platform.runLater(() -> {
             ModernCard card = cards.get(peerName);
-            if (card != null) {
+            if (card == null) return;
+
+            if (text.startsWith("OFFER_ID:")) {
+                String[] parts = text.split(":");
+                String fileid = parts[1];
+                String fileName = parts[2];
+                card.setPendingFile(fileName,0);
+                card.setPendingFile(fileid);
+                
+                card.setOnDownloadRequest(() -> {
+                    p2p.sendText(peerName, "REQUEST_FILE:" + fileid);
+                });
+                
+            } else if (text.startsWith("REQUEST_FILE:")) {
+                String fileId = text.split(":")[1];
+               
+                File file = pendingFiles.get(fileId);
+
+                if (file != null) {
+                    try {
+                        System.out.println("[DEBUG] 開始調用 p2p.sendFile");
+                        p2p.sendFile(peerName, file);
+                        p2p.sendText(peerName, "FILE_ARRIVED:" + fileId + "|" + file.getName());
+                        System.out.println("[DEBUG] p2p.sendFile 已呼叫完畢");
+                    } catch (Exception e) {
+                        e.printStackTrace(); // 看看這裡有沒有印出錯誤訊息！
+                    }
+                }
+            } else if (text.startsWith("FILE_ARRIVED:")) {
+                String content = text.substring("FILE_ARRIVED:".length());
+                String parts[] = content.split("\\|",2);
+                if (parts.length == 2) {
+                    String fileId = parts[0];
+                    String fileName = parts[1];
+                    File receivedFile = lastReceivedFile;
+                    Platform.runLater(() ->{
+                        if (receivedFile != null) {
+                            card.setFile(receivedFile);
+                            card.setDownloaded(true);
+                            card.setText("已接收檔案: " + fileName);
+                        } else {
+                            card.setText("接收檔案完成 (但找不到檔案): " + fileName);
+                        }
+                    });
+                }    
+            // 這裡就是觸發 UI 更新的地方
+            //card.setText("已接收檔案: " + fileName);
+            } else {
+                System.out.println("[DEBUG] 錯誤：找不到對應的檔案！ID 是否過期？");
+                System.out.println(text);
                 card.setText(text);
+                if (AppSettings.current().isAutoClipboardCopy()) {
+                    copyToClipboard(text);
+                }
             }
 
-            if (AppSettings.current().isAutoClipboardCopy()) {
-                copyToClipboard(text);
-            }
         });
     }
 
@@ -237,28 +309,56 @@ public class MainStage extends Stage implements P2PListener {
             }
         });
     }
+    
 
     @Override
     public void onTransferComplete(String peerName, File file) {
+        this.lastReceivedFile = file;
         Platform.runLater(() -> {
-            ProgressStage ps = activeProgress.remove(peerName);
-            if (ps != null) {
-                ps.close();
-            }
+        ModernCard card = cards.get(peerName);
+        if (card != null) {
+            card.setFile(file); 
+            card.setDownloaded(true);
+            receivedFilesById.put(file.getName(),file);
 
-            ModernCard card = cards.get(peerName);
-            if (card != null) {
-                card.setFile(file);
-                card.setDownloaded(true);
-            }
-        });
+            System.out.println("傳輸完成:" + file.getName());
+        }
+    });
     }
 
     private void addPeer(String name) {
         if (cards.containsKey(name)) {
             return;
         }
+
         ModernCard card = new ModernCard(name);
+
+        card.setOnFileDropped(file ->{
+            String fileId = java.util.UUID.randomUUID().toString();
+            pendingFiles.put(fileId,file);
+
+            p2p.sendText(name, "OFFER_ID:" + fileId + ":" + file.getName());
+
+        });
+
+        card.setOnTextDropped((text) -> {
+            // 1. 傳送文字
+            p2p.sendText(name, text);
+            // 2. 直接顯示在 UI 上
+            card.setText("已傳送文字"); 
+
+
+            new Thread(() -> {
+                try {
+                    Thread.sleep(500); 
+                    Platform.runLater(() -> card.setText("尚無訊息"));
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }).start();
+
+        });
+
         card.setText("尚無訊息");
         card.setOnHistoryRequest(() -> openHistoryFor(name));
         card.setOnDownloadRequest(() -> startDownload(name));
