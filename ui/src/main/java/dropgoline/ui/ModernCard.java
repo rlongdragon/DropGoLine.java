@@ -43,6 +43,7 @@ public class ModernCard extends StackPane {
     private Consumer<File> onFileDropped;
     private Consumer<String> onTextDropped;
     private boolean hasPendingDownload = false;
+    private boolean clearAfterDrag = false;
 
     public ModernCard(String name) {
         this(name, name);
@@ -60,8 +61,8 @@ public class ModernCard extends StackPane {
         contentLabel.setWrapText(true);
 
         previewView = new ImageView();
-        previewView.setFitWidth(180);
-        previewView.setFitHeight(100);
+        previewView.fitWidthProperty().bind(widthProperty().subtract(24));
+        previewView.fitHeightProperty().bind(heightProperty().subtract(48));
         previewView.setPreserveRatio(true);
         previewView.setSmooth(true);
 
@@ -119,10 +120,7 @@ public class ModernCard extends StackPane {
                         + ", file=" + file.getAbsolutePath() + ", size=" + file.length());
                 setFile(file);
                 if (onFileDropped != null) {
-                    System.out.println("[DropGoLine][UI] Dispatching dropped file to peer=" + peername);
                     onFileDropped.accept(file);
-                } else {
-                    System.out.println("[DropGoLine][UI] No file drop handler for peer=" + peername);
                 }
                 success = true;
             } else if (db.hasString()) {
@@ -157,7 +155,9 @@ public class ModernCard extends StackPane {
         });
 
         setOnDragDone(event -> {
-            if (event.getTransferMode() == TransferMode.COPY && dragText != null) {
+            if (clearAfterDrag && event.getTransferMode() != null) {
+                clearContent();
+            } else if (event.getTransferMode() == TransferMode.COPY && dragText != null) {
                 setText("Ready");
                 dragText = null;
             }
@@ -198,11 +198,8 @@ public class ModernCard extends StackPane {
             if (!hasPendingDownload) {
                 return;
             }
-            System.out.println("[DropGoLine][UI] Pending file card clicked peer=" + peername);
             if (onDownloadRequest != null) {
                 onDownloadRequest.run();
-            } else {
-                System.out.println("[DropGoLine][UI] No download handler for peer=" + peername);
             }
             event.consume();
         });
@@ -243,6 +240,7 @@ public class ModernCard extends StackPane {
     public void setText(String text) {
         contentLabel.setText(text);
         layout.setCenter(contentLabel);
+        previewView.setImage(null);
         dragText = text;
         dragFile = null;
         hasPendingDownload = false;
@@ -254,6 +252,7 @@ public class ModernCard extends StackPane {
     public void setFile(File file) {
         contentLabel.setText("File: " + file.getName());
         layout.setCenter(contentLabel);
+        previewView.setImage(null);
         dragFile = file;
         dragText = null;
         hasPendingDownload = false;
@@ -285,6 +284,25 @@ public class ModernCard extends StackPane {
 
     public void setDownloaded(boolean downloaded) {
         checkMark.setVisible(downloaded);
+    }
+
+    public void setClearAfterDrag(boolean clearAfterDrag) {
+        this.clearAfterDrag = clearAfterDrag;
+    }
+
+    public void clearContent() {
+        contentLabel.setText("");
+        layout.setCenter(contentLabel);
+        previewView.setImage(null);
+        dragText = null;
+        dragFile = null;
+        hasPendingDownload = false;
+        pendingOfferId = null;
+        setProgress(0);
+        setDownloaded(false);
+        if (downloadItem != null) {
+            downloadItem.setVisible(false);
+        }
     }
 
     public void setOnHistoryRequest(Runnable handler) {

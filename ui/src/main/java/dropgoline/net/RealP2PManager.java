@@ -4,6 +4,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -116,7 +117,8 @@ public class RealP2PManager implements P2PManager {
                                 + ", offerId=" + event.offerId() + ", file=" + file
                                 + ", direct=" + event.direct());
                         if (file != null) {
-                            HistoryManager.getInstance().addHistory(from, file.toString(), true, "FILE");
+                            HistoryManager.getInstance().addHistory(from, file.toString(), true,
+                                    isImageFileName(file.getFileName().toString()) ? "IMAGE" : "FILE");
                         }
                         if (file != null && listener != null) {
                             listener.onTransferComplete(from, file.toFile());
@@ -274,5 +276,18 @@ public class RealP2PManager implements P2PManager {
                     + file.getAbsolutePath() + ": " + ex.getMessage());
             ex.printStackTrace();
         }
+    }
+
+    private boolean isImageFileName(String fileName) {
+        if (fileName == null) {
+            return false;
+        }
+        String name = fileName.toLowerCase(Locale.ROOT);
+        return name.endsWith(".png")
+                || name.endsWith(".jpg")
+                || name.endsWith(".jpeg")
+                || name.endsWith(".gif")
+                || name.endsWith(".bmp")
+                || name.endsWith(".webp");
     }
 }

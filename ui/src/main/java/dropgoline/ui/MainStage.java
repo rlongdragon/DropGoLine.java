@@ -3,12 +3,19 @@ package dropgoline.ui;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Base64;
 import java.util.HashMap;
-import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import dropgoline.historyservice.HistoryManager;
-import dropgoline.model.HistoryItem;
 import dropgoline.net.P2PListener;
 import dropgoline.net.P2PManager;
 import dropgoline.settings.AppSettings;
@@ -38,14 +45,14 @@ import javafx.stage.StageStyle;
 import javafx.util.Duration;
 
 public class MainStage extends Stage implements P2PListener {
+    private static final long MAX_REMOTE_IMAGE_BYTES = 20L * 1024 * 1024;
+
     private final P2PManager p2p;
     private final FlowPane cardPane;
     private final Map<String, ModernCard> cards = new HashMap<>();
     private final Map<String, ProgressStage> activeProgress = new HashMap<>();
     private final Map<String, Timeline> progressSims = new HashMap<>();
-    private final Map<String, File> pendingFiles = new HashMap<>();
 
-    private File lastReceivedFile;
     private double dragOffsetX;
     private double dragOffsetY;
     private boolean trayInstalled = false;
@@ -73,8 +80,9 @@ public class MainStage extends Stage implements P2PListener {
         cardPane.setPadding(new Insets(15));
 
         SendCard sendCard = new SendCard(
-                files -> files.forEach(p2p::broadcastFile),
-                p2p::broadcastText);
+                files -> files.forEach(this::broadcastFileWithHistory),
+                this::broadcastTextWithHistory,
+                this::importImageSourceAndSend);
         cardPane.getChildren().add(sendCard);
 
         ScrollPane scrollPane = new ScrollPane(cardPane);
@@ -150,9 +158,8 @@ public class MainStage extends Stage implements P2PListener {
     }
 
     private void openHistoryFor(String peerName) {
-        List<HistoryItem> items = HistoryManager.getInstance().getHistory(peerName);
-        System.out.println("[DEBUG] history items for " + peerName + ": " + items.size());
-        new HistoryStage(peerName, items).show();
+        HistoryStage history = new HistoryStage(peerName, HistoryManager.getInstance().getHistory(peerName));
+        history.show();
     }
 
     private void startDownload(String peerName) {
@@ -186,6 +193,159 @@ public class MainStage extends Stage implements P2PListener {
         System.out.println("[Clipboard] copied: " + text);
     }
 
+    private void broadcastTextWithHistory(String text) {
+        p2p.broadcastText(text);
+        for (String peerName : cards.keySet()) {
+            HistoryManager.getInstance().addHistory(peerName, text, false, "TEXT");
+        }
+    }
+
+    private void broadcastFileWithHistory(File file) {
+        p2p.broadcastFile(file);
+        addOutgoingFileHistory(file);
+    }
+
+    private void addOutgoingFileHistory(File file) {
+        String type = isImageFile(file) ? "IMAGE" : "FILE";
+        String content = file.getAbsolutePath();
+        for (String peerName : cards.keySet()) {
+            HistoryManager.getInstance().addHistory(peerName, content, false, type);
+        }
+    }
+
+    private void importImageSourceAndSend(String imageSource) {
+        CompletableFuture.runAsync(() -> {
+            try {
+                File file = imageSource.trim().toLowerCase(Locale.ROOT).startsWith("data:image/")
+                        ? writeDataUrlImage(imageSource)
+                        : downloadRemoteImage(imageSource);
+                broadcastFileWithHistory(file);
+            } catch (Exception ex) {
+                System.err.println("[Image] import failed from " + shortImageSource(imageSource)
+                        + ": " + shortErrorMessage(ex));
+            }
+        });
+    }
+
+    private File writeDataUrlImage(String dataUrl) throws IOException {
+        int comma = dataUrl.indexOf(',');
+        if (comma < 0) {
+            throw new IOException("invalid data URL");
+        }
+
+        String header = dataUrl.substring(0, comma).toLowerCase(Locale.ROOT);
+        String base64 = dataUrl.substring(comma + 1);
+        if (!header.startsWith("data:image/") || !header.contains(";base64")) {
+            throw new IOException("unsupported data URL image format");
+        }
+
+        String contentType = header.substring("data:".length());
+        int semicolon = contentType.indexOf(';');
+        if (semicolon >= 0) {
+            contentType = contentType.substring(0, semicolon);
+        }
+        if (!isImageContentType(contentType)) {
+            throw new IOException("data URL is not an image: " + contentType);
+        }
+
+        byte[] bytes;
+        try {
+            bytes = Base64.getMimeDecoder().decode(base64);
+        } catch (IllegalArgumentException ex) {
+            throw new IOException("invalid image data", ex);
+        }
+        if (bytes.length > MAX_REMOTE_IMAGE_BYTES) {
+            throw new IOException("image is larger than " + MAX_REMOTE_IMAGE_BYTES + " bytes");
+        }
+
+        Path target = Files.createTempFile("dropgoline-image-", extensionForContentType(contentType));
+        Files.write(target, bytes);
+        return target.toFile();
+    }
+
+    private File downloadRemoteImage(String imageUrl) throws Exception {
+        URI uri = URI.create(imageUrl.trim());
+        String scheme = uri.getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            throw new IllegalArgumentException("unsupported image URL: " + imageUrl);
+        }
+
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(java.time.Duration.ofSeconds(20))
+                .header("User-Agent", "DropGoLine/0.1")
+                .GET()
+                .build();
+        HttpResponse<InputStream> response = HttpClient.newHttpClient()
+                .send(request, HttpResponse.BodyHandlers.ofInputStream());
+
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("HTTP " + response.statusCode() + " for " + imageUrl);
+        }
+
+        String contentType = response.headers()
+                .firstValue("Content-Type")
+                .orElse("");
+        if (!isImageContentType(contentType)) {
+            throw new IOException("URL is not an image: " + contentType);
+        }
+
+        Path target = Files.createTempFile("dropgoline-image-", extensionForContentType(contentType));
+        long written = 0;
+        byte[] buffer = new byte[8192];
+        try (InputStream in = response.body();
+                var out = Files.newOutputStream(target)) {
+            int read;
+            while ((read = in.read(buffer)) >= 0) {
+                written += read;
+                if (written > MAX_REMOTE_IMAGE_BYTES) {
+                    throw new IOException("image is larger than " + MAX_REMOTE_IMAGE_BYTES + " bytes");
+                }
+                out.write(buffer, 0, read);
+            }
+        }
+        return target.toFile();
+    }
+
+    private boolean isImageContentType(String contentType) {
+        return contentType != null
+                && contentType.toLowerCase(Locale.ROOT).startsWith("image/");
+    }
+
+    private String extensionForContentType(String contentType) {
+        String normalized = contentType == null
+                ? ""
+                : contentType.toLowerCase(Locale.ROOT).split(";", 2)[0].trim();
+        return switch (normalized) {
+            case "image/jpeg" -> ".jpg";
+            case "image/png" -> ".png";
+            case "image/gif" -> ".gif";
+            case "image/bmp" -> ".bmp";
+            case "image/webp" -> ".webp";
+            default -> ".img";
+        };
+    }
+
+    private String shortImageSource(String source) {
+        if (source == null) {
+            return "(empty)";
+        }
+        String text = source.trim();
+        if (text.toLowerCase(Locale.ROOT).startsWith("data:image/")) {
+            int comma = text.indexOf(',');
+            String header = comma >= 0 ? text.substring(0, comma) : text;
+            return header + ",...";
+        }
+        return text.length() > 120 ? text.substring(0, 120) + "..." : text;
+    }
+
+    private String shortErrorMessage(Exception ex) {
+        String message = ex.getMessage();
+        if (message == null || message.isBlank()) {
+            return ex.getClass().getSimpleName();
+        }
+        return message.length() > 160 ? message.substring(0, 160) + "..." : message;
+    }
+
     @Override
     public void onIdChanged(String id) {
         SystemTrayHelper.updateId(id);
@@ -208,44 +368,13 @@ public class MainStage extends Stage implements P2PListener {
     public void onMessageReceived(String peerName, String text) {
         Platform.runLater(() -> {
             ModernCard card = cards.get(peerName);
-            if (card == null) {
-                return;
-            }
-
-            if (text.startsWith("OFFER_ID:")) {
-                String[] parts = text.split(":", 3);
-                if (parts.length >= 3) {
-                    String fileId = parts[1];
-                    String fileName = parts[2];
-                    card.setPendingFile(fileName, 0);
-                    card.setPendingFile(fileId);
-                    card.setOnDownloadRequest(() -> p2p.sendText(peerName, "REQUEST_FILE:" + fileId));
-                }
-            } else if (text.startsWith("REQUEST_FILE:")) {
-                String fileId = text.substring("REQUEST_FILE:".length());
-                File file = pendingFiles.get(fileId);
-                if (file != null) {
-                    p2p.sendFile(peerName, file);
-                    p2p.sendText(peerName, "FILE_ARRIVED:" + fileId + "|" + file.getName());
-                }
-            } else if (text.startsWith("FILE_ARRIVED:")) {
-                String content = text.substring("FILE_ARRIVED:".length());
-                String[] parts = content.split("\\|", 2);
-                String fileName = parts.length == 2 ? parts[1] : content;
-                File receivedFile = lastReceivedFile;
-                if (receivedFile != null) {
-                    card.setFile(receivedFile);
-                    card.setDownloaded(true);
-                    card.setText("Received file: " + fileName);
-                } else {
-                    card.setText("File received: " + fileName);
-                }
-            } else {
+            if (card != null) {
                 System.out.println("[DropGoLine][UI] message from=" + peerName + ": " + text);
                 card.setText(text);
-                if (AppSettings.current().isAutoClipboardCopy()) {
-                    copyToClipboard(text);
-                }
+            }
+
+            if (AppSettings.current().isAutoClipboardCopy()) {
+                copyToClipboard(text);
             }
         });
     }
@@ -256,6 +385,9 @@ public class MainStage extends Stage implements P2PListener {
             ModernCard card = cards.get(peerName);
             if (card != null) {
                 card.setPendingFile(fileName, fileSize);
+                if (isImageFileName(fileName)) {
+                    startDownload(peerName);
+                }
             }
         });
     }
@@ -272,7 +404,6 @@ public class MainStage extends Stage implements P2PListener {
 
     @Override
     public void onTransferComplete(String peerName, File file) {
-        this.lastReceivedFile = file;
         Platform.runLater(() -> {
             Timeline sim = progressSims.remove(peerName);
             if (sim != null) {
@@ -288,11 +419,32 @@ public class MainStage extends Stage implements P2PListener {
             ModernCard card = cards.get(peerName);
             if (card != null) {
                 card.setFile(file);
+                if (isImageFile(file)) {
+                    Image image = new Image(file.toURI().toString(), 180, 100, true, true);
+                    card.setPreviewImage(image);
+                }
                 card.setDownloaded(true);
             }
 
             System.out.println("Transfer complete: " + file.getName());
         });
+    }
+
+    private boolean isImageFile(File file) {
+        return file != null && isImageFileName(file.getName());
+    }
+
+    private boolean isImageFileName(String fileName) {
+        if (fileName == null) {
+            return false;
+        }
+        String name = fileName.toLowerCase(Locale.ROOT);
+        return name.endsWith(".png")
+                || name.endsWith(".jpg")
+                || name.endsWith(".jpeg")
+                || name.endsWith(".gif")
+                || name.endsWith(".bmp")
+                || name.endsWith(".webp");
     }
 
     private void addPeer(String name) {
@@ -302,10 +454,12 @@ public class MainStage extends Stage implements P2PListener {
 
         ModernCard card = new ModernCard(name, PeerIds.displayName(name));
         card.setText("Ready");
+        card.setClearAfterDrag(true);
         card.setOnHistoryRequest(() -> openHistoryFor(name));
         card.setOnDownloadRequest(() -> startDownload(name));
         card.setOnTextDropped(text -> {
             p2p.sendText(name, text);
+            HistoryManager.getInstance().addHistory(name, text, false, "TEXT");
             card.setText("Sent text");
             new Thread(() -> {
                 try {
@@ -317,12 +471,11 @@ public class MainStage extends Stage implements P2PListener {
             }, "text-drop-reset").start();
         });
         card.setOnFileDropped(file -> {
-            String fileId = java.util.UUID.randomUUID().toString();
-            pendingFiles.put(fileId, file);
-            p2p.sendText(name, "OFFER_ID:" + fileId + ":" + file.getName());
             System.out.println("[DropGoLine][UI] Calling p2p.sendFile peer=" + name
                     + ", file=" + file.getAbsolutePath() + ", size=" + file.length());
             p2p.sendFile(name, file);
+            HistoryManager.getInstance().addHistory(name, file.getAbsolutePath(), false,
+                    isImageFile(file) ? "IMAGE" : "FILE");
         });
 
         cards.put(name, card);
