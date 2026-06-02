@@ -35,3 +35,4 @@ replay_pid*
 
 # .gitignore
 settings.json
+target/
