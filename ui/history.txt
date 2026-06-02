@@ -41,3 +41,287 @@ jerry%2398b8|2026-06-02 22:09:35|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
 jerry%23bfe6|2026-06-02 22:09:39|FILE|true|C:\Users\USER\Downloads\DropGoLine\你好嗎.txt
 jerry%2398b8|2026-06-02 22:09:58|IMAGE|false|C:\Users\USER\Desktop\dropgoline-image-12186149237453347849.jpg
 jerry%23bfe6|2026-06-02 22:09:58|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\dropgoline-image-12186149237453347849.jpg
+jerry%23c85b|2026-06-03 00:04:07|TEXT|false|你是智障
+jerry%23cda0|2026-06-03 00:04:07|TEXT|true|你是智障
+jerry%23c85b|2026-06-03 00:04:27|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+jerry%23cda0|2026-06-03 00:04:29|FILE|true|C:\Users\USER\Downloads\DropGoLine\你好嗎.txt
+jerry%23c85b|2026-06-03 00:05:03|IMAGE|false|C:\Users\USER\Pictures\Screenshots\螢幕擷取畫面 2026-05-30 191845.png
+jerry%23cda0|2026-06-03 00:05:04|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\螢幕擷取畫面 2026-05-30 191845.png
+jerry%23c85b|2026-06-03 00:05:29|IMAGE|false|C:\Users\USER\Pictures\Screenshots\456789.png
+jerry%23cda0|2026-06-03 00:05:29|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\456789.png
+jerry%23cda0|2026-06-03 00:05:48|IMAGE|false|C:\Users\USER\AppData\Local\Temp\dropgoline-image-7693763380410270475.png
+jerry%23c85b|2026-06-03 00:05:48|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\dropgoline-image-7693763380410270475.png
+jerry%232193|2026-06-03 00:29:02|FILE|false|C:\Users\USER\Desktop\綠島團1人.xlsx
+jerry%232059|2026-06-03 00:29:02|FILE|false|C:\Users\USER\Desktop\綠島團1人.xlsx
+jerry%23d63d|2026-06-03 00:44:44|TEXT|false|你好嗎你好嗎
+
+你是智障你是智障
+jerry%2360c8|2026-06-03 00:44:44|TEXT|false|你好嗎你好嗎
+
+你是智障你是智障
+jerry%23de1e|2026-06-03 00:44:45|TEXT|true|你好嗎你好嗎
+
+你是智障你是智障
+jerry%23de1e|2026-06-03 00:44:45|TEXT|true|你好嗎你好嗎
+
+你是智障你是智障
+jerry%23d63d|2026-06-03 00:44:59|TEXT|false|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+jerry%2360c8|2026-06-03 00:44:59|TEXT|true|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+jerry%23d63d|2026-06-03 00:45:13|TEXT|false|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+你是智障你是智障障你是智障
+jerry%2360c8|2026-06-03 00:45:13|TEXT|true|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+你是智障你是智障障你是智障
+jerry%23d63d|2026-06-03 00:45:52|TEXT|false|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+jerry%2360c8|2026-06-03 00:45:52|TEXT|false|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+jerry%23d63d|2026-06-03 00:45:56|TEXT|false|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+jerry%2360c8|2026-06-03 00:45:56|TEXT|false|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+jerry%23de1e|2026-06-03 00:45:59|TEXT|true|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+jerry%23de1e|2026-06-03 00:45:59|TEXT|true|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+jerry%23de1e|2026-06-03 00:45:59|TEXT|true|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+jerry%23de1e|2026-06-03 00:45:59|TEXT|true|你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+你好嗎你好嗎
+
+你是智障你是智障你好嗎你好嗎
+
+你是智障你是智障
+你是智障你是智障你好嗎你好嗎
+
+你是智你好嗎你好嗎
+
+jerry%23d63d|2026-06-03 00:46:22|TEXT|false|你好嗎
+jerry%2360c8|2026-06-03 00:46:22|TEXT|false|你好嗎
+jerry%23de1e|2026-06-03 00:46:22|TEXT|true|你好嗎
+jerry%23de1e|2026-06-03 00:46:22|TEXT|true|你好嗎
+jerry%23d63d|2026-06-03 00:46:31|TEXT|false|你好嗎你好嗎你好嗎
+jerry%2360c8|2026-06-03 00:46:31|TEXT|true|你好嗎你好嗎你好嗎
+jerry%23d63d|2026-06-03 00:46:36|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+jerry%2360c8|2026-06-03 00:46:39|FILE|true|C:\Users\USER\Downloads\DropGoLine\你好嗎.txt
+jerry%23de1e|2026-06-03 00:46:47|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry%2360c8|2026-06-03 00:46:48|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\456789.png
+jerry|2026-06-03 00:51:26|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 00:51:26|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 00:51:26|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 00:51:26|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\456789.png
+jerry|2026-06-03 00:51:51|TEXT|false|你好嗎你好嗎你好嗎你好嗎你好嗎
+jerry|2026-06-03 00:51:51|TEXT|false|你好嗎你好嗎你好嗎你好嗎你好嗎
+jerry|2026-06-03 00:51:51|TEXT|false|你好嗎你好嗎你好嗎你好嗎你好嗎
+jerry|2026-06-03 00:51:51|TEXT|true|你好嗎你好嗎你好嗎你好嗎你好嗎
+jerry|2026-06-03 00:51:51|TEXT|true|你好嗎你好嗎你好嗎你好嗎你好嗎
+__GROUP__|2026-06-03 01:03:10|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+__GROUP__|2026-06-03 01:03:47|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+__GROUP__|2026-06-03 01:04:03|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 01:04:04|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\456789.png
+jerry|2026-06-03 01:04:13|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 01:04:13|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\456789.png
+jerry|2026-06-03 01:04:15|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 01:04:16|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\456789.png
+jerry|2026-06-03 01:04:19|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 01:04:27|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 01:04:30|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 01:04:32|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\456789.png
+jerry|2026-06-03 01:04:34|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 01:04:44|IMAGE|false|C:\Users\USER\Desktop\456789.png
+__GROUP__|2026-06-03 01:05:42|IMAGE|false|C:\Users\USER\Desktop\456789.png
+jerry|2026-06-03 01:05:43|IMAGE|true|C:\Users\USER\Downloads\DropGoLine\456789.png
+jerry|2026-06-03 01:05:55|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+jerry|2026-06-03 01:06:01|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+jerry|2026-06-03 01:06:07|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+jerry|2026-06-03 01:06:19|FILE|true|C:\Users\USER\Downloads\DropGoLine\你好嗎.txt
+jerry|2026-06-03 01:06:26|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+jerry|2026-06-03 01:06:28|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+jerry|2026-06-03 01:06:37|FILE|false|C:\Users\USER\Desktop\你好嗎.txt
+__GROUP__|2026-06-03 01:10:13|FILE|false|C:\Users\USER\Desktop\DropGoLine-master.zip
+jerry|2026-06-03 01:10:17|FILE|true|C:\Users\USER\Downloads\DropGoLine\DropGoLine-master.zip

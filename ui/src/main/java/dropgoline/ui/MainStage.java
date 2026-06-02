@@ -54,6 +54,8 @@ import javafx.util.Duration;
 
 public class MainStage extends Stage implements P2PListener {
     private static final long MAX_REMOTE_IMAGE_BYTES = 20L * 1024 * 1024;
+    private static final String GROUP_HISTORY_KEY = "__GROUP__";
+    private static final String GROUP_HISTORY_TITLE = "群聊";
 
     private final P2PManager p2p;
     private final FlowPane cardPane;
@@ -90,7 +92,8 @@ public class MainStage extends Stage implements P2PListener {
         SendCard sendCard = new SendCard(
                 files -> files.forEach(this::broadcastFileWithHistory),
                 this::broadcastTextWithHistory,
-                this::importImageSourceAndSend);
+                this::importImageSourceAndSend,
+                this::openGroupHistory);
         cardPane.getChildren().add(sendCard);
 
         ScrollPane scrollPane = new ScrollPane(cardPane);
@@ -201,7 +204,13 @@ public class MainStage extends Stage implements P2PListener {
     }
 
     private void openHistoryFor(String peerName) {
-        HistoryStage history = new HistoryStage(peerName, HistoryManager.getInstance().getHistory(peerName));
+        HistoryStage history = new HistoryStage(stripSuffix(peerName), HistoryManager.getInstance().getHistory(peerName));
+        history.show();
+    }
+
+    private void openGroupHistory() {
+        HistoryStage history = new HistoryStage(GROUP_HISTORY_TITLE,
+                HistoryManager.getInstance().getHistory(GROUP_HISTORY_KEY));
         history.show();
     }
 
@@ -235,18 +244,50 @@ public class MainStage extends Stage implements P2PListener {
     }
 
     private void broadcastTextWithHistory(String text) {
-        p2p.broadcastText(text);
-        for (String peerName : cards.keySet()) {
-            HistoryManager.getInstance().addHistory(peerName, text, false, "TEXT");
+        if (text == null || text.isBlank()) {
+            return;
         }
+        p2p.broadcastText(text);
+        HistoryManager.getInstance().addHistory(GROUP_HISTORY_KEY, text, false, "TEXT");
     }
 
     private void broadcastFileWithHistory(File file) {
+        if (file == null) {
+            return;
+        }
         p2p.broadcastFile(file);
         String type = isImageFile(file) ? "IMAGE" : "FILE";
-        String content = file.getAbsolutePath();
-        for (String peerName : cards.keySet()) {
-            HistoryManager.getInstance().addHistory(peerName, content, false, type);
+        HistoryManager.getInstance().addHistory(GROUP_HISTORY_KEY, file.getAbsolutePath(), false, type);
+    }
+
+    private void sendTextToPeerWithHistory(String peerName, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        p2p.sendText(peerName, text);
+        HistoryManager.getInstance().addHistory(peerName, text, false, "TEXT");
+
+        ModernCard card = cards.get(peerName);
+        if (card != null) {
+            card.setText(text);
+        }
+    }
+
+    private void sendFileToPeerWithHistory(String peerName, File file) {
+        if (file == null) {
+            return;
+        }
+        p2p.sendFile(peerName, file);
+        String type = isImageFile(file) ? "IMAGE" : "FILE";
+        HistoryManager.getInstance().addHistory(peerName, file.getAbsolutePath(), false, type);
+
+        ModernCard card = cards.get(peerName);
+        if (card != null) {
+            card.setFile(file);
+            if (isImageFile(file)) {
+                Image image = new Image(file.toURI().toString(), 180, 100, true, true);
+                card.setPreviewImage(image);
+            }
         }
     }
 
@@ -491,14 +532,21 @@ public class MainStage extends Stage implements P2PListener {
         card.setText("尚無訊息");
         card.setOnHistoryRequest(() -> openHistoryFor(name));
         card.setOnDownloadRequest(() -> startDownload(name));
+        card.setOnFilesDropped(files -> files.forEach(file -> sendFileToPeerWithHistory(name, file)));
+        card.setOnTextDropped(text -> sendTextToPeerWithHistory(name, text));
 
         cards.put(name, card);
         cardPane.getChildren().add(card);
     }
 
     private static String stripSuffix(String peerId){
-        int i = peerId.lastIndexOf("#");
-        return (i > 0) ? peerId.substring(0, i) : peerId;
+        if (peerId == null) {
+            return "";
+        }
+        int hashIndex = peerId.lastIndexOf("#");
+        int encodedHashIndex = peerId.lastIndexOf("%23");
+        int splitIndex = Math.max(hashIndex, encodedHashIndex);
+        return (splitIndex > 0) ? peerId.substring(0, splitIndex) : peerId;
     }
 
     private void removePeer(String name) {

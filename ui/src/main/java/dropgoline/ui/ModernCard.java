@@ -2,6 +2,7 @@ package dropgoline.ui;
 
 import java.io.File;
 import java.util.List;
+import java.util.function.Consumer;
 
 import javafx.animation.Interpolator;
 import javafx.animation.KeyFrame;
@@ -20,6 +21,7 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.Dragboard;
+import javafx.scene.input.MouseButton;
 import javafx.scene.input.TransferMode;
 
 public class ModernCard extends StackPane {
@@ -37,6 +39,8 @@ public class ModernCard extends StackPane {
     private MenuItem downloadItem;
     private Runnable onDownloadRequest;
     private Runnable onHistoryRequest;
+    private Consumer<List<File>> onFilesDropped;
+    private Consumer<String> onTextDropped;
     private boolean clearAfterDrag = false;
 
     public ModernCard(String name) {
@@ -79,6 +83,7 @@ public class ModernCard extends StackPane {
         setPrefSize(200, 150);
 
         setupDragSource();
+        setupDropTarget();
         setupContextMenu();
         setupHoverAnimation();
     }
@@ -108,6 +113,40 @@ public class ModernCard extends StackPane {
         });
     }
 
+    private void setupDropTarget() {
+        setOnDragOver(event -> {
+            Dragboard db = event.getDragboard();
+            if (event.getGestureSource() != this && (db.hasFiles() || db.hasString())) {
+                event.acceptTransferModes(TransferMode.COPY);
+                if (!getStyleClass().contains("drag-over")) {
+                    getStyleClass().add("drag-over");
+                }
+            }
+            event.consume();
+        });
+
+        setOnDragExited(event -> {
+            getStyleClass().remove("drag-over");
+            event.consume();
+        });
+
+        setOnDragDropped(event -> {
+            Dragboard db = event.getDragboard();
+            boolean done = false;
+            if (db.hasFiles() && onFilesDropped != null) {
+                onFilesDropped.accept(db.getFiles());
+                done = true;
+            } else if (db.hasString() && onTextDropped != null) {
+                onTextDropped.accept(db.getString());
+                done = true;
+            }
+
+            event.setDropCompleted(done);
+            getStyleClass().remove("drag-over");
+            event.consume();
+        });
+    }
+
     private void setupContextMenu() {
         ContextMenu menu = new ContextMenu();
 
@@ -126,6 +165,13 @@ public class ModernCard extends StackPane {
             }
         });
         menu.getItems().addAll(downloadItem, historyItem);
+
+        setOnMouseClicked(event -> {
+            if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 1 && onHistoryRequest != null) {
+                onHistoryRequest.run();
+                event.consume();
+            }
+        });
 
         setOnContextMenuRequested(event -> {
             menu.show(this, event.getScreenX(), event.getScreenY());
@@ -224,6 +270,14 @@ public class ModernCard extends StackPane {
 
     public void setOnDownloadRequest(Runnable handler) {
         this.onDownloadRequest = handler;
+    }
+
+    public void setOnFilesDropped(Consumer<List<File>> handler) {
+        this.onFilesDropped = handler;
+    }
+
+    public void setOnTextDropped(Consumer<String> handler) {
+        this.onTextDropped = handler;
     }
 
     public String getPeerName() {

@@ -18,7 +18,8 @@ public class SendCard extends StackPane {
             "<img[^>]+src\\s*=\\s*[\"']([^\"']+)[\"']",
             Pattern.CASE_INSENSITIVE);
 
-    public SendCard(Consumer<List<File>> onFiles, Consumer<String> onText, Consumer<String> onImageSource) {
+    public SendCard(Consumer<List<File>> onFiles, Consumer<String> onText, Consumer<String> onImageSource,
+            Runnable onHistoryRequest) {
         getStyleClass().add("send-card");
         setPrefSize(200, 90);
 
@@ -26,6 +27,13 @@ public class SendCard extends StackPane {
         label.getStyleClass().add("send-card-label");
         label.setWrapText(true);
         getChildren().add(label);
+
+        setOnMouseClicked(e -> {
+            if (onHistoryRequest != null) {
+                onHistoryRequest.run();
+            }
+            e.consume();
+        });
 
         setOnDragOver(e -> {
             Dragboard db = e.getDragboard();
