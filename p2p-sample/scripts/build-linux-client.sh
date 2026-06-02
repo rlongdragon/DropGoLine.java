@@ -24,7 +24,7 @@ jpackage \
   --name "$APP_NAME" \
   --input "$INPUT_DIR" \
   --main-jar java-p2p-client.jar \
-  --main-class p2p.chat.P2pChatCli \
+  --main-class sample.chat.P2pChatCli \
   --dest "$OUTPUT_DIR"
 
 echo "Client executable:"

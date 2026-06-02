@@ -473,13 +473,48 @@ public final class P2pSessionInstance implements AutoCloseable {
         if (!Files.isRegularFile(path)) {
             throw new IllegalArgumentException("file does not exist: " + path);
         }
+        if (remotePeerId != null && !remotePeerId.isBlank()) {
+            offerFileToPeer(path, remotePeerId);
+            return;
+        }
+
+        Set<String> targets = new HashSet<>(knownMembers);
+        targets.remove(peerId);
+        targets.addAll(sessionsByPeer.keySet());
+        if (targets.isEmpty()) {
+            receivedListener.onReceived(P2pEvent.notice(peerId, "no peers in this group yet", false));
+            return;
+        }
+        for (String target : targets) {
+            offerFileToPeer(path, target);
+        }
+    }
+
+    private void offerFileToPeer(Path path, String remotePeerId) throws Exception {
+        P2pSession session = sessionsByPeer.get(remotePeerId);
+        if (session != null) {
+            try {
+                session.offerFile(path);
+                return;
+            } catch (Exception e) {
+                sessionsByPeer.remove(remotePeerId);
+                errorCallback.onError(remotePeerId, "direct file offer failed; using relay fallback: " + userMessage(e));
+            }
+        }
+        offerRelayFile(path, remotePeerId);
+    }
+
+    private void offerRelayFile(Path path, String remotePeerId) throws Exception {
         String id = UUID.randomUUID().toString().substring(0, 8);
         relayLocalOffers.put(id, path);
-        Map<String, Object> payload = remotePeerId == null || remotePeerId.isBlank()
-                ? Map.of("id", id, "fileName", path.getFileName().toString(), "size", Files.size(path))
-                : Map.of("id", id, "fileName", path.getFileName().toString(), "size", Files.size(path),
+        Map<String, Object> payload = Map.of(
+                "id", id,
+                "fileName", path.getFileName().toString(),
+                "size", Files.size(path),
                 "to", remotePeerId);
         signal.sendToServer("group-file-offer", payload);
+        receivedListener.onReceived(P2pEvent.notice(peerId,
+                "offered " + path + " as " + id + " to " + remotePeerId + " by relay fallback", false));
     }
 
     private void requestFile(String id) throws Exception {
