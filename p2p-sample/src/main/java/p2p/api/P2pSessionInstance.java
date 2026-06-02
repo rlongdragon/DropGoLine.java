@@ -4,6 +4,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.HashSet;
@@ -14,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -31,11 +34,13 @@ import p2p.quic.QuicChannel;
 import p2p.quic.QuicCertificateFiles;
 import p2p.quic.QuicTransportService;
 import p2p.signaling.SignalMessage;
+import p2p.transfer.FileChecksums;
 
 public final class P2pSessionInstance implements AutoCloseable {
     private static final Duration SIGNAL_POLL = Duration.ofMillis(500);
     private static final Duration SIGNAL_TIMEOUT = Duration.ofMinutes(5);
     private static final Duration ICE_TIMEOUT = Duration.ofSeconds(45);
+    private static final Duration DIRECT_RECONNECT_WINDOW = Duration.ofSeconds(30);
     private static final int RELAY_FILE_CHUNK_SIZE = 3 * 1024;
 
     private final PeerSignalClient signal;
@@ -46,11 +51,14 @@ public final class P2pSessionInstance implements AutoCloseable {
     private final QuicTransportService quic = new QuicTransportService();
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ScheduledExecutorService reconnectExecutor = Executors.newSingleThreadScheduledExecutor();
     private final Map<String, P2pSession> sessionsByPeer = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<IceDescription>> pendingAnswers = new ConcurrentHashMap<>();
-    private final Map<String, Path> relayLocalOffers = new ConcurrentHashMap<>();
+    private final Map<String, RelayLocalOffer> relayLocalOffers = new ConcurrentHashMap<>();
     private final Map<String, RelayRemoteOffer> relayRemoteOffers = new ConcurrentHashMap<>();
     private final Map<String, RelayIncomingFile> relayIncomingFiles = new ConcurrentHashMap<>();
+    private final Map<String, Integer> reconnectAttempts = new ConcurrentHashMap<>();
+    private final Map<String, Long> reconnectDeadlines = new ConcurrentHashMap<>();
     private final Set<String> knownMembers = ConcurrentHashMap.newKeySet();
     private final Set<String> connectingPeers = ConcurrentHashMap.newKeySet();
     private volatile P2pReceivedListener receivedListener = event -> {
@@ -176,6 +184,8 @@ public final class P2pSessionInstance implements AutoCloseable {
                     chat.startReader();
                     chatRef.set(chat);
                     sessionsByPeer.put(remotePeerId, chat);
+                    reconnectAttempts.remove(remotePeerId);
+                    reconnectDeadlines.remove(remotePeerId);
                     chat.waitUntilClosed();
                 }
             } catch (Exception e) {
@@ -193,6 +203,7 @@ public final class P2pSessionInstance implements AutoCloseable {
                 if (session != null) {
                     ice.free(session);
                 }
+                scheduleReconnect(remotePeerId);
             }
         });
     }
@@ -231,6 +242,7 @@ public final class P2pSessionInstance implements AutoCloseable {
                     case "group-file-start", "room-file-start" -> receiveRelayFileStart(message);
                     case "group-file-chunk", "room-file-chunk" -> receiveRelayFileChunk(message);
                     case "group-file-end", "room-file-end" -> receiveRelayFileEnd(message);
+                    case "group-file-resume", "room-file-resume" -> receiveRelayFileResume(message);
                     case "group-file-notice", "room-file-notice" -> receivedListener.onReceived(P2pEvent.notice(message.from(),
                             message.payload().path("message").asText(""), false));
                     case "error" -> errorCallback.onError(message.from(), signalErrorText(message));
@@ -270,6 +282,8 @@ public final class P2pSessionInstance implements AutoCloseable {
                         chat.startReader();
                         chatRef.set(chat);
                         sessionsByPeer.put(remotePeerId, chat);
+                        reconnectAttempts.remove(remotePeerId);
+                        reconnectDeadlines.remove(remotePeerId);
                         try {
                             chat.waitUntilClosed();
                         } catch (InterruptedException e) {
@@ -297,6 +311,7 @@ public final class P2pSessionInstance implements AutoCloseable {
                 if (session != null) {
                     ice.free(session);
                 }
+                scheduleReconnect(remotePeerId);
             }
         });
     }
@@ -326,6 +341,7 @@ public final class P2pSessionInstance implements AutoCloseable {
             @Override
             public void onDisconnected(String peerId) {
                 removePeer(remotePeerId);
+                scheduleReconnect(remotePeerId);
             }
 
             @Override
@@ -365,22 +381,25 @@ public final class P2pSessionInstance implements AutoCloseable {
         String id = payload.path("id").asText("");
         String fileName = sanitizeFileName(payload.path("fileName").asText(""));
         long size = payload.path("size").asLong(-1);
+        String checksum = payload.path("checksum").asText("");
         String sender = message.from();
-        if (id.isBlank() || fileName.isBlank() || size < 0 || sender == null || sender.isBlank()) {
+        if (id.isBlank() || fileName.isBlank() || size < 0 || checksum.isBlank()
+                || sender == null || sender.isBlank()) {
             return;
         }
-        relayRemoteOffers.put(id, new RelayRemoteOffer(sender, fileName, size));
+        relayRemoteOffers.put(id, new RelayRemoteOffer(sender, fileName, size, checksum));
         receivedListener.onReceived(P2pEvent.fileOffer(sender, id, fileName, size, false));
     }
 
     private void receiveRelayFileRequest(SignalMessage message) {
         String id = message.payload().path("id").asText("");
+        long offset = message.payload().path("offset").asLong(0);
         String requester = message.from();
         if (id.isBlank() || requester == null || requester.isBlank()) {
             return;
         }
-        Path path = relayLocalOffers.get(id);
-        if (path == null) {
+        RelayLocalOffer offer = relayLocalOffers.get(id);
+        if (offer == null) {
             try {
                 sendRelayFileNotice(requester, "file offer not found: " + id);
             } catch (Exception e) {
@@ -390,7 +409,7 @@ public final class P2pSessionInstance implements AutoCloseable {
         }
         executor.submit(() -> {
             try {
-                sendRelayFile(requester, id, path);
+                sendRelayFile(requester, id, offer, offset);
             } catch (Exception e) {
                 errorCallback.onError(requester, userMessage(e));
             }
@@ -402,17 +421,30 @@ public final class P2pSessionInstance implements AutoCloseable {
         String id = payload.path("id").asText("");
         String fileName = sanitizeFileName(payload.path("fileName").asText(""));
         long size = payload.path("size").asLong(-1);
-        if (id.isBlank() || fileName.isBlank() || size < 0) {
+        String checksum = payload.path("checksum").asText("");
+        long offset = payload.path("offset").asLong(0);
+        if (id.isBlank() || fileName.isBlank() || size < 0 || checksum.isBlank()) {
             return;
+        }
+        if (offset < 0 || offset > size) {
+            throw new IllegalStateException("invalid relay file resume offset for " + id + ": " + offset);
         }
         Files.createDirectories(downloadDirectory);
         Path target = downloadDirectory.resolve(fileName);
+        Path partial = partialPath(target);
+        long existing = Files.isRegularFile(partial) ? Files.size(partial) : 0;
+        if (offset > 0 && existing != offset) {
+            throw new IllegalStateException("relay file resume offset mismatch for " + id
+                    + ": expected local partial " + existing + ", got " + offset);
+        }
         RelayIncomingFile previous = relayIncomingFiles.remove(id);
         if (previous != null) {
             previous.close();
         }
-        relayIncomingFiles.put(id, new RelayIncomingFile(message.from(), target, size,
-                Files.newOutputStream(target)));
+        relayIncomingFiles.put(id, new RelayIncomingFile(message.from(), target, partial, size, checksum,
+                offset, offset > 0
+                ? Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+                : Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)));
     }
 
     private void receiveRelayFileChunk(SignalMessage message) throws Exception {
@@ -439,8 +471,32 @@ public final class P2pSessionInstance implements AutoCloseable {
             errorCallback.onError(message.from(), "file size mismatch for " + id);
             return;
         }
+        String actualChecksum = FileChecksums.sha256(incoming.partial());
+        if (!actualChecksum.equalsIgnoreCase(incoming.checksum())) {
+            errorCallback.onError(message.from(), "file checksum mismatch for " + id + ": expected "
+                    + incoming.checksum() + ", got " + actualChecksum);
+            return;
+        }
+        moveCompletedFile(incoming.partial(), incoming.target());
         relayRemoteOffers.remove(id);
         receivedListener.onReceived(P2pEvent.fileSaved(message.from(), id, incoming.target(), false));
+    }
+
+    private void receiveRelayFileResume(SignalMessage message) {
+        String id = message.payload().path("id").asText("");
+        long offset = message.payload().path("offset").asLong(0);
+        String requester = message.from();
+        RelayLocalOffer offer = relayLocalOffers.get(id);
+        if (id.isBlank() || requester == null || requester.isBlank() || offer == null) {
+            return;
+        }
+        executor.submit(() -> {
+            try {
+                sendRelayFile(requester, id, offer, offset);
+            } catch (Exception e) {
+                errorCallback.onError(requester, userMessage(e));
+            }
+        });
     }
 
     private void sendText(String text) throws Exception {
@@ -473,19 +529,60 @@ public final class P2pSessionInstance implements AutoCloseable {
         if (!Files.isRegularFile(path)) {
             throw new IllegalArgumentException("file does not exist: " + path);
         }
+        if (remotePeerId != null && !remotePeerId.isBlank()) {
+            offerFileToPeer(path, remotePeerId);
+            return;
+        }
+
+        Set<String> targets = new HashSet<>(knownMembers);
+        targets.remove(peerId);
+        targets.addAll(sessionsByPeer.keySet());
+        if (targets.isEmpty()) {
+            receivedListener.onReceived(P2pEvent.notice(peerId, "no peers in this group yet", false));
+            return;
+        }
+        for (String target : targets) {
+            offerFileToPeer(path, target);
+        }
+    }
+
+    private void offerFileToPeer(Path path, String remotePeerId) throws Exception {
+        P2pSession session = sessionsByPeer.get(remotePeerId);
+        if (session != null) {
+            try {
+                session.offerFile(path);
+                return;
+            } catch (Exception e) {
+                sessionsByPeer.remove(remotePeerId);
+                errorCallback.onError(remotePeerId, "direct file offer failed; using relay fallback: " + userMessage(e));
+            }
+        }
+        offerRelayFile(path, remotePeerId);
+    }
+
+    private void offerRelayFile(Path path, String remotePeerId) throws Exception {
         String id = UUID.randomUUID().toString().substring(0, 8);
-        relayLocalOffers.put(id, path);
-        Map<String, Object> payload = remotePeerId == null || remotePeerId.isBlank()
-                ? Map.of("id", id, "fileName", path.getFileName().toString(), "size", Files.size(path))
-                : Map.of("id", id, "fileName", path.getFileName().toString(), "size", Files.size(path),
+        long size = Files.size(path);
+        String checksum = FileChecksums.sha256(path);
+        relayLocalOffers.put(id, new RelayLocalOffer(path, path.getFileName().toString(), size, checksum));
+        Map<String, Object> payload = Map.of(
+                "id", id,
+                "fileName", path.getFileName().toString(),
+                "size", size,
+                "checksum", checksum,
                 "to", remotePeerId);
         signal.sendToServer("group-file-offer", payload);
+        receivedListener.onReceived(P2pEvent.notice(peerId,
+                "offered " + path + " as " + id + " to " + remotePeerId + " by relay fallback", false));
     }
 
     private void requestFile(String id) throws Exception {
         RelayRemoteOffer relayOffer = relayRemoteOffers.get(id);
         if (relayOffer != null) {
-            signal.sendToServer("group-file-request", Map.of("to", relayOffer.sender(), "id", id));
+            signal.sendToServer("group-file-request", Map.of(
+                    "to", relayOffer.sender(),
+                    "id", id,
+                    "offset", relayResumeOffset(relayOffer)));
             return;
         }
         for (Map.Entry<String, P2pSession> entry : sessionsByPeer.entrySet()) {
@@ -498,16 +595,27 @@ public final class P2pSessionInstance implements AutoCloseable {
         }
     }
 
-    private void sendRelayFile(String remotePeerId, String id, Path path) throws Exception {
-        long size = Files.size(path);
+    private void sendRelayFile(String remotePeerId, String id, RelayLocalOffer offer, long offset) throws Exception {
+        if (Files.size(offer.path()) != offer.size()
+                || !FileChecksums.sha256(offer.path()).equalsIgnoreCase(offer.checksum())) {
+            sendRelayFileNotice(remotePeerId, "file changed after offer; share it again: " + id);
+            return;
+        }
+        if (offset < 0 || offset > offer.size()) {
+            sendRelayFileNotice(remotePeerId, "invalid resume offset for " + id + ": " + offset);
+            return;
+        }
         signal.sendToServer("group-file-start", Map.of(
                 "to", remotePeerId,
                 "id", id,
-                "fileName", path.getFileName().toString(),
-                "size", size));
+                "fileName", offer.fileName(),
+                "size", offer.size(),
+                "checksum", offer.checksum(),
+                "offset", offset));
 
         byte[] buffer = new byte[RELAY_FILE_CHUNK_SIZE];
-        try (InputStream fileInput = Files.newInputStream(path)) {
+        try (InputStream fileInput = Files.newInputStream(offer.path())) {
+            skipFully(fileInput, offset);
             int read;
             while ((read = fileInput.read(buffer)) >= 0) {
                 byte[] chunk = read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read);
@@ -531,6 +639,38 @@ public final class P2pSessionInstance implements AutoCloseable {
         }
         pendingAnswers.remove(remotePeerId);
         connectingPeers.remove(remotePeerId);
+        reconnectAttempts.remove(remotePeerId);
+        reconnectDeadlines.remove(remotePeerId);
+    }
+
+    private void scheduleReconnect(String remotePeerId) {
+        if (!running || remotePeerId == null || remotePeerId.isBlank() || remotePeerId.equals(peerId)) {
+            return;
+        }
+        if (!knownMembers.contains(remotePeerId) || sessionsByPeer.containsKey(remotePeerId)
+                || connectingPeers.contains(remotePeerId)) {
+            return;
+        }
+        long now = System.nanoTime();
+        long deadline = reconnectDeadlines.computeIfAbsent(remotePeerId,
+                ignored -> now + DIRECT_RECONNECT_WINDOW.toNanos());
+        if (now >= deadline) {
+            reconnectAttempts.remove(remotePeerId);
+            reconnectDeadlines.remove(remotePeerId);
+            receivedListener.onReceived(P2pEvent.notice(remotePeerId,
+                    "direct link was not restored within 30 seconds; ask this peer to rejoin if relay also stops",
+                    false));
+            return;
+        }
+        int attempt = reconnectAttempts.merge(remotePeerId, 1, (oldValue, one) -> Math.min(oldValue + 1, 8));
+        long delaySeconds = Math.min(10, 1L << Math.min(attempt, 3));
+        long remainingSeconds = Math.max(1, TimeUnit.NANOSECONDS.toSeconds(deadline - now));
+        delaySeconds = Math.min(delaySeconds, remainingSeconds);
+        reconnectExecutor.schedule(() -> {
+            if (running && knownMembers.contains(remotePeerId) && !sessionsByPeer.containsKey(remotePeerId)) {
+                connectToPeer(remotePeerId);
+            }
+        }, delaySeconds, TimeUnit.SECONDS);
     }
 
     @Override
@@ -545,6 +685,7 @@ public final class P2pSessionInstance implements AutoCloseable {
             } catch (Exception ignored) {
             }
         }
+        reconnectExecutor.shutdownNow();
         executor.shutdownNow();
     }
 
@@ -581,6 +722,44 @@ public final class P2pSessionInstance implements AutoCloseable {
         return sanitized.isBlank() ? "download" : sanitized;
     }
 
+    private long relayResumeOffset(RelayRemoteOffer offer) throws java.io.IOException {
+        Path partial = partialPath(downloadDirectory.resolve(offer.fileName()));
+        if (!Files.isRegularFile(partial)) {
+            return 0;
+        }
+        long offset = Files.size(partial);
+        return offset >= offer.size() ? 0 : offset;
+    }
+
+    private static Path partialPath(Path target) {
+        Path fileName = target.getFileName();
+        String partialName = (fileName == null ? "download" : fileName.toString()) + ".part";
+        Path parent = target.getParent();
+        return parent == null ? Path.of(partialName) : parent.resolve(partialName);
+    }
+
+    private static void moveCompletedFile(Path partial, Path target) throws java.io.IOException {
+        try {
+            Files.move(partial, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            Files.move(partial, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void skipFully(InputStream input, long bytes) throws java.io.IOException {
+        long remaining = bytes;
+        while (remaining > 0) {
+            long skipped = input.skip(remaining);
+            if (skipped <= 0) {
+                if (input.read() == -1) {
+                    throw new java.io.IOException("cannot skip to resume offset " + bytes);
+                }
+                skipped = 1;
+            }
+            remaining -= skipped;
+        }
+    }
+
     private static String env(String name, String fallback) {
         String value = System.getenv(name);
         return value == null || value.isBlank() ? fallback : value;
@@ -610,20 +789,29 @@ public final class P2pSessionInstance implements AutoCloseable {
         return payload.toString();
     }
 
-    private record RelayRemoteOffer(String sender, String fileName, long size) {
+    private record RelayLocalOffer(Path path, String fileName, long size, String checksum) {
+    }
+
+    private record RelayRemoteOffer(String sender, String fileName, long size, String checksum) {
     }
 
     private static final class RelayIncomingFile implements AutoCloseable {
         private final String sender;
         private final Path target;
+        private final Path partial;
         private final long size;
+        private final String checksum;
         private final OutputStream output;
         private long received;
 
-        private RelayIncomingFile(String sender, Path target, long size, OutputStream output) {
+        private RelayIncomingFile(String sender, Path target, Path partial, long size, String checksum,
+                                  long received, OutputStream output) {
             this.sender = sender;
             this.target = target;
+            this.partial = partial;
             this.size = size;
+            this.checksum = checksum;
+            this.received = received;
             this.output = output;
         }
 
@@ -635,8 +823,16 @@ public final class P2pSessionInstance implements AutoCloseable {
             return target;
         }
 
+        private Path partial() {
+            return partial;
+        }
+
         private long size() {
             return size;
+        }
+
+        private String checksum() {
+            return checksum;
         }
 
         private long received() {

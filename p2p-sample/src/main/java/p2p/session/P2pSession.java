@@ -7,14 +7,19 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.SocketException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import p2p.transfer.FileChecksums;
 
 public class P2pSession implements AutoCloseable {
     private static final long KEEPALIVE_SECONDS = 10;
@@ -30,7 +35,7 @@ public class P2pSession implements AutoCloseable {
     private final AtomicBoolean closedOnce = new AtomicBoolean();
     private final Runnable onClose;
     private final Listener listener;
-    private final Map<String, Path> localOffers = new ConcurrentHashMap<>();
+    private final Map<String, LocalOffer> localOffers = new ConcurrentHashMap<>();
     private final Map<String, RemoteOffer> remoteOffers = new ConcurrentHashMap<>();
     private volatile boolean running = true;
 
@@ -98,26 +103,33 @@ public class P2pSession implements AutoCloseable {
         }
 
         String id = UUID.randomUUID().toString().substring(0, 8);
-        localOffers.put(id, path);
+        long size = Files.size(path);
+        String checksum = FileChecksums.sha256(path);
+        localOffers.put(id, new LocalOffer(path, path.getFileName().toString(), size, checksum));
         synchronized (output) {
             output.writeInt(SessionProtocol.TYPE_FILE_OFFER);
             output.writeUTF(id);
             output.writeUTF(path.getFileName().toString());
-            output.writeLong(Files.size(path));
+            output.writeLong(size);
+            output.writeUTF(checksum);
             output.flush();
         }
         listener.onNotice(localPeerId, "offered " + path + " as " + id);
     }
 
     public void requestFile(String id) throws IOException {
+        RemoteOffer offer = remoteOffers.get(id);
+        long offset = resumeOffset(offer);
         synchronized (output) {
             output.writeInt(SessionProtocol.TYPE_FILE_REQUEST);
             output.writeUTF(id);
+            output.writeLong(offset);
             output.flush();
         }
-        RemoteOffer offer = remoteOffers.get(id);
         if (offer == null) {
             listener.onNotice(localPeerId, "requested " + id);
+        } else if (offset > 0) {
+            listener.onNotice(localPeerId, "requested " + id + " (" + offer.fileName() + ") from byte " + offset);
         } else {
             listener.onNotice(localPeerId, "requested " + id + " (" + offer.fileName() + ")");
         }
@@ -146,7 +158,7 @@ public class P2pSession implements AutoCloseable {
                 switch (type) {
                     case SessionProtocol.TYPE_TEXT -> listener.onText(remotePeerId, input.readUTF());
                     case SessionProtocol.TYPE_FILE_OFFER -> receiveFileOffer();
-                    case SessionProtocol.TYPE_FILE_REQUEST -> sendRequestedFile(input.readUTF());
+                    case SessionProtocol.TYPE_FILE_REQUEST -> sendRequestedFile(input.readUTF(), input.readLong());
                     case SessionProtocol.TYPE_FILE_START -> receiveFile();
                     case SessionProtocol.TYPE_NOTICE -> listener.onNotice(remotePeerId, input.readUTF());
                     case SessionProtocol.TYPE_KEEPALIVE -> {
@@ -196,32 +208,44 @@ public class P2pSession implements AutoCloseable {
         String id = input.readUTF();
         String fileName = sanitizeFileName(input.readUTF());
         long size = input.readLong();
-        remoteOffers.put(id, new RemoteOffer(fileName, size));
+        String checksum = input.readUTF();
+        remoteOffers.put(id, new RemoteOffer(fileName, size, checksum));
         listener.onFileOffer(remotePeerId, id, fileName, size);
     }
 
-    private void sendRequestedFile(String id) throws IOException {
+    private void sendRequestedFile(String id, long offset) throws IOException {
         // Security boundary: the peer may request only an opaque offer id.
         // It never supplies a path, and we only serve files explicitly shared
         // earlier by this local process through /file.
-        Path path = localOffers.get(id);
-        if (path == null) {
+        LocalOffer offer = localOffers.get(id);
+        if (offer == null) {
             sendNotice("file offer not found: " + id);
             return;
         }
-        sendFile(id, path);
+        sendFile(id, offer, offset);
     }
 
-    private void sendFile(String id, Path path) throws IOException {
-        long size = Files.size(path);
+    private void sendFile(String id, LocalOffer offer, long offset) throws IOException {
+        if (Files.size(offer.path()) != offer.size()
+                || !FileChecksums.sha256(offer.path()).equalsIgnoreCase(offer.checksum())) {
+            sendNotice("file changed after offer; share it again: " + id);
+            return;
+        }
+        if (offset < 0 || offset > offer.size()) {
+            sendNotice("invalid resume offset for " + id + ": " + offset);
+            return;
+        }
         synchronized (output) {
             output.writeInt(SessionProtocol.TYPE_FILE_START);
             output.writeUTF(id);
-            output.writeUTF(path.getFileName().toString());
-            output.writeLong(size);
+            output.writeUTF(offer.fileName());
+            output.writeLong(offer.size());
+            output.writeUTF(offer.checksum());
+            output.writeLong(offset);
 
             byte[] buffer = new byte[SessionProtocol.CHUNK_SIZE];
-            try (InputStream fileInput = Files.newInputStream(path)) {
+            try (InputStream fileInput = Files.newInputStream(offer.path())) {
+                skipFully(fileInput, offset);
                 int read;
                 while ((read = fileInput.read(buffer)) >= 0) {
                     output.writeInt(SessionProtocol.TYPE_FILE_CHUNK);
@@ -235,18 +259,32 @@ public class P2pSession implements AutoCloseable {
             output.writeUTF(id);
             output.flush();
         }
-        listener.onNotice(localPeerId, "sent " + path + " for " + id);
+        listener.onNotice(localPeerId, "sent " + offer.path() + " for " + id
+                + (offset > 0 ? " from byte " + offset : ""));
     }
 
     private void receiveFile() throws IOException {
         String id = input.readUTF();
         String fileName = sanitizeFileName(input.readUTF());
         long size = input.readLong();
+        String checksum = input.readUTF();
+        long offset = input.readLong();
         Files.createDirectories(downloadDirectory);
         Path target = downloadDirectory.resolve(fileName);
+        Path partial = partialPath(target);
+        if (offset < 0 || offset > size) {
+            throw new IOException("invalid file resume offset for " + id + ": " + offset);
+        }
+        long existing = Files.isRegularFile(partial) ? Files.size(partial) : 0;
+        if (offset > 0 && existing != offset) {
+            throw new IOException("file resume offset mismatch for " + id + ": expected local partial "
+                    + existing + ", got " + offset);
+        }
 
-        long received = 0;
-        try (OutputStream fileOutput = Files.newOutputStream(target)) {
+        long received = offset;
+        try (OutputStream fileOutput = offset > 0
+                ? Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+                : Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
             while (true) {
                 int type = input.readInt();
                 if (type == SessionProtocol.TYPE_FILE_END) {
@@ -277,8 +315,55 @@ public class P2pSession implements AutoCloseable {
         if (received != size) {
             throw new IOException("file size mismatch for " + id + ": expected " + size + ", got " + received);
         }
+        String actualChecksum = FileChecksums.sha256(partial);
+        if (!actualChecksum.equalsIgnoreCase(checksum)) {
+            throw new IOException("file checksum mismatch for " + id + ": expected "
+                    + checksum + ", got " + actualChecksum);
+        }
+        moveCompletedFile(partial, target);
         remoteOffers.remove(id);
         listener.onFileSaved(remotePeerId, id, target);
+    }
+
+    private long resumeOffset(RemoteOffer offer) throws IOException {
+        if (offer == null) {
+            return 0;
+        }
+        Path partial = partialPath(downloadDirectory.resolve(offer.fileName()));
+        if (!Files.isRegularFile(partial)) {
+            return 0;
+        }
+        long offset = Files.size(partial);
+        return offset >= offer.size() ? 0 : offset;
+    }
+
+    private Path partialPath(Path target) {
+        Path fileName = target.getFileName();
+        String partialName = (fileName == null ? "download" : fileName.toString()) + ".part";
+        Path parent = target.getParent();
+        return parent == null ? Path.of(partialName) : parent.resolve(partialName);
+    }
+
+    private void moveCompletedFile(Path partial, Path target) throws IOException {
+        try {
+            Files.move(partial, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(partial, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private void skipFully(InputStream input, long bytes) throws IOException {
+        long remaining = bytes;
+        while (remaining > 0) {
+            long skipped = input.skip(remaining);
+            if (skipped <= 0) {
+                if (input.read() == -1) {
+                    throw new IOException("cannot skip to resume offset " + bytes);
+                }
+                skipped = 1;
+            }
+            remaining -= skipped;
+        }
     }
 
     private void sendNotice(String message) throws IOException {
@@ -318,7 +403,10 @@ public class P2pSession implements AutoCloseable {
         }
     }
 
-    private record RemoteOffer(String fileName, long size) {
+    private record RemoteOffer(String fileName, long size, String checksum) {
+    }
+
+    private record LocalOffer(Path path, String fileName, long size, String checksum) {
     }
 
     public interface Listener {
