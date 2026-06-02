@@ -11,6 +11,7 @@ import java.awt.event.MouseEvent;
 import javax.swing.SwingUtilities;
 
 import javafx.application.Platform;
+import javafx.geometry.Point2D;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
@@ -86,6 +87,8 @@ public final class SystemTrayHelper {
     // ===== 自訂選單視窗（FX 執行緒）=====
 
     private static void showMenu(Stage mainStage, double screenX, double screenY) {
+        Point2D anchor = normalizeTrayCoordinates(screenX, screenY);
+
         if (menuStage != null && menuStage.isShowing()) {
             menuStage.hide();
         }
@@ -126,11 +129,35 @@ public final class SystemTrayHelper {
 
         double menuWidth = Math.ceil(box.prefWidth(-1));
         double menuHeight = Math.ceil(box.prefHeight(menuWidth));
-        placeMenuWithinScreen(screenX, screenY, menuWidth, menuHeight);
+        placeMenuWithinScreen(anchor.getX(), anchor.getY(), menuWidth, menuHeight);
         menuStage.show();
         // 系統匣在右下角 → 選單往左上方開，並夾住不超出螢幕
-        placeMenuWithinScreen(screenX, screenY, menuStage.getWidth(), menuStage.getHeight());
+        placeMenuWithinScreen(anchor.getX(), anchor.getY(), menuStage.getWidth(), menuStage.getHeight());
         menuStage.requestFocus();
+    }
+
+    private static Point2D normalizeTrayCoordinates(double screenX, double screenY) {
+        if (!Screen.getScreensForRectangle(screenX, screenY, 1, 1).isEmpty()) {
+            return new Point2D(screenX, screenY);
+        }
+
+        for (Screen screen : Screen.getScreens()) {
+            Point2D scaled = toJavaFxCoordinates(screen, screenX, screenY);
+            if (contains(screen.getBounds(), scaled.getX(), scaled.getY())) {
+                return scaled;
+            }
+        }
+
+        return toJavaFxCoordinates(Screen.getPrimary(), screenX, screenY);
+    }
+
+    private static Point2D toJavaFxCoordinates(Screen screen, double screenX, double screenY) {
+        Rectangle2D bounds = screen.getBounds();
+        double scaleX = Math.max(1, screen.getOutputScaleX());
+        double scaleY = Math.max(1, screen.getOutputScaleY());
+        return new Point2D(
+                bounds.getMinX() + ((screenX - bounds.getMinX() * scaleX) / scaleX),
+                bounds.getMinY() + ((screenY - bounds.getMinY() * scaleY) / scaleY));
     }
 
     private static void placeMenuWithinScreen(double anchorX, double anchorY, double menuWidth, double menuHeight) {
@@ -150,6 +177,11 @@ public final class SystemTrayHelper {
                 .findFirst()
                 .orElse(Screen.getPrimary())
                 .getVisualBounds();
+    }
+
+    private static boolean contains(Rectangle2D bounds, double x, double y) {
+        return x >= bounds.getMinX() && x <= bounds.getMaxX()
+                && y >= bounds.getMinY() && y <= bounds.getMaxY();
     }
 
     private static double clamp(double value, double min, double max) {
