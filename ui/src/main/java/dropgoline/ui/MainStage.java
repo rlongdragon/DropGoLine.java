@@ -193,6 +193,8 @@ public class MainStage extends Stage implements P2PListener {
     }
 
     private void startDownload(String peerName) {
+        System.out.println("[DropGoLine][UI] startDownload peer=" + peerName
+                + ", alreadyActive=" + activeProgress.containsKey(peerName));
         if (activeProgress.containsKey(peerName)) {
             return;
         }
@@ -303,6 +305,11 @@ public class MainStage extends Stage implements P2PListener {
         card.setText("尚無訊息");
         card.setOnHistoryRequest(() -> openHistoryFor(name));
         card.setOnDownloadRequest(() -> startDownload(name));
+        card.setOnFileDropped(file -> {
+            System.out.println("[DropGoLine][UI] Calling p2p.sendFile peer=" + name
+                    + ", file=" + file.getAbsolutePath() + ", size=" + file.length());
+            p2p.sendFile(name, file);
+        });
 
         cards.put(name, card);
         cardPane.getChildren().add(card);

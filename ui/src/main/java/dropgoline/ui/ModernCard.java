@@ -2,25 +2,27 @@ package dropgoline.ui;
 
 import java.io.File;
 import java.util.List;
+import java.util.function.Consumer;
 
 import javafx.animation.Interpolator;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
 import javafx.animation.Timeline;
-import javafx.util.Duration;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressBar;
-import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.StackPane;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.Dragboard;
+import javafx.scene.input.MouseButton;
 import javafx.scene.input.TransferMode;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.StackPane;
+import javafx.util.Duration;
 
 public class ModernCard extends StackPane {
     private final String peername;
@@ -37,6 +39,8 @@ public class ModernCard extends StackPane {
     private MenuItem downloadItem;
     private Runnable onDownloadRequest;
     private Runnable onHistoryRequest;
+    private Consumer<File> onFileDropped;
+    private boolean hasPendingDownload = false;
 
     public ModernCard(String name) {
         this.peername = name;
@@ -77,11 +81,60 @@ public class ModernCard extends StackPane {
 
         setPrefSize(200, 150);
 
+        setupDragReceiving();
         setupDragSource();
         setupContextMenu();
+        setupClickActions();
         setupHoverAnimation();
     }
 
+    private void setupDragReceiving() {
+        setOnDragOver(event -> {
+            Dragboard db = event.getDragboard();
+            if (db.hasFiles() || db.hasString()) {
+                event.acceptTransferModes(TransferMode.COPY);
+            }
+            event.consume();
+        });
+
+        setOnDragEntered(event -> {
+            Dragboard db = event.getDragboard();
+            if (db.hasFiles() || db.hasString()) {
+                getStyleClass().add("drag-over");
+            }
+            event.consume();
+        });
+
+        setOnDragExited(event -> {
+            getStyleClass().remove("drag-over");
+            event.consume();
+        });
+
+        setOnDragDropped(event -> {
+            Dragboard db = event.getDragboard();
+            boolean success = false;
+
+            if (db.hasFiles()) {
+                File file = db.getFiles().get(0);
+                System.out.println("[DropGoLine][UI] File dropped on card peer=" + peername
+                        + ", file=" + file.getAbsolutePath() + ", size=" + file.length());
+                setFile(file);
+                if (onFileDropped != null) {
+                    System.out.println("[DropGoLine][UI] Dispatching dropped file to peer=" + peername);
+                    onFileDropped.accept(file);
+                } else {
+                    System.out.println("[DropGoLine][UI] No file drop handler for peer=" + peername);
+                }
+                success = true;
+            } else if (db.hasString()) {
+                setText(db.getString());
+                success = true;
+            }
+            event.setDropCompleted(success);
+            getStyleClass().remove("drag-over");
+            event.consume();
+        });
+    }
 
     private void setupDragSource() {
         setOnDragDetected(event -> {
@@ -125,6 +178,24 @@ public class ModernCard extends StackPane {
         });
     }
 
+    private void setupClickActions() {
+        setOnMouseClicked(event -> {
+            if (event.getButton() != MouseButton.PRIMARY || event.getClickCount() != 1) {
+                return;
+            }
+            if (!hasPendingDownload) {
+                return;
+            }
+            System.out.println("[DropGoLine][UI] Pending file card clicked peer=" + peername);
+            if (onDownloadRequest != null) {
+                onDownloadRequest.run();
+            } else {
+                System.out.println("[DropGoLine][UI] No download handler for peer=" + peername);
+            }
+            event.consume();
+        });
+    }
+
     private void setupHoverAnimation(){
         setOnMouseEntered(e -> animateScale(1.03));
         setOnMouseExited(e -> animateScale(1.0));
@@ -145,6 +216,7 @@ public class ModernCard extends StackPane {
         layout.setCenter(contentLabel);
         dragText = null;
         dragFile = null;
+        hasPendingDownload = true;
         downloadItem.setVisible(true);
     }
 
@@ -153,6 +225,7 @@ public class ModernCard extends StackPane {
         layout.setCenter(contentLabel);
         dragText = text;
         dragFile = null;
+        hasPendingDownload = false;
         if (downloadItem != null){
             downloadItem.setVisible(false);
         }
@@ -163,6 +236,7 @@ public class ModernCard extends StackPane {
         layout.setCenter(contentLabel);
         dragFile = file;
         dragText = null;
+        hasPendingDownload = false;
         if (downloadItem != null){
             downloadItem.setVisible(false);
         }
@@ -199,6 +273,10 @@ public class ModernCard extends StackPane {
 
     public void setOnDownloadRequest(Runnable handler) {
         this.onDownloadRequest = handler;
+    }
+
+    public void setOnFileDropped(Consumer<File> handler) {
+        this.onFileDropped = handler;
     }
 
     public String getPeerName() {
