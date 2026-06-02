@@ -73,14 +73,18 @@ public class RealP2PManager implements P2PManager {
                 }
 
                 if (code == null || code.isBlank()) {
-                    String newCode = p2p.createGroup();      // 建立新 group
-                    group = p2p.currentGroup();
-                    if (listener != null) listener.onIdChanged(newCode);
+                    createNewGroup();
                 } else {
-                    group = p2p.joinGroup(code);             // 加入既有 group
-                    if (listener != null) listener.onIdChanged(code);
+                    try{
+                        group = p2p.joinGroup(code);
+                        if (listener != null) {
+                            listener.onIdChanged(code);
+                        }
+                    } catch (Exception joinEx) {
+                        System.err.println("[P2P] 加入 " + code + " 失敗，改開新房間：" + joinEx.getMessage());
+                        createNewGroup();
+                    }
                 }
-
                 attachEventListener();
                 reportInitialMembers();   // 補抓加入前就在房裡的人
             } catch (Exception ex) {
@@ -142,6 +146,14 @@ public class RealP2PManager implements P2PManager {
         if (reportedPeers.remove(peer)) {
             latestOfferByPeer.remove(peer);
             if (listener != null) listener.onPeerLeft(peer);
+        }
+    }
+
+    private void createNewGroup() throws Exception {
+        String newCode = p2p.createGroup();
+        group = p2p.currentGroup();
+        if (listener != null) {
+            listener.onIdChanged(newCode);
         }
     }
 
@@ -208,6 +220,26 @@ public class RealP2PManager implements P2PManager {
         }
         try {
             group.save(offerId);    // 後端背景下載，完成時觸發 FILE_SAVED
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    @Override
+    public void broadcastText(String text) {
+        if (group == null) return;
+        try {
+            group.send(text);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    @Override
+    public void broadcastFile(File file) {
+        if (group == null) return;
+        try {
+            group.send(file.toPath());
         } catch (Exception ex) {
             ex.printStackTrace();
         }

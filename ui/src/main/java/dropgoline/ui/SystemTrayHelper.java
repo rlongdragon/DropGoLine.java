@@ -12,39 +12,40 @@ import javax.swing.SwingUtilities;
 
 import javafx.application.Platform;
 import javafx.scene.Scene;
-import javafx.scene.control.ContextMenu;
-import javafx.scene.control.Menu;
-import javafx.scene.control.MenuItem;
-import javafx.scene.control.SeparatorMenuItem;
-import javafx.scene.layout.Pane;
+import javafx.scene.control.Label;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
-/**
- * 系統匣常駐圖示。右鍵選單用 JavaFX ContextMenu 繪製，
- * 因為 AWT 原生選單在中文 Windows 上會顯示成框框。
- */
+/** 系統匣常駐圖示。右鍵選單用「可聚焦的小視窗」實作，點擊與 hover 才會正常。 */
 public final class SystemTrayHelper {
 
     private SystemTrayHelper() {}
 
     private static TrayIcon trayIcon;
-    private static Stage anchorStage;              // 隱形視窗，給 ContextMenu 當 owner
+    private static Stage menuStage;
     private static volatile String currentId = "-";
+    private static Runnable onConnect;
+    private static Runnable onDisconnect;
 
-    public static boolean install(Stage stage, String iconResourcePath, String tooltip) {
+    public static boolean install(Stage stage, String iconResourcePath, String tooltip,
+                                  Runnable connectAction, Runnable disconnectAction) {
         if (!SystemTray.isSupported()) {
             System.out.println("[Tray] 此系統不支援系統匣");
             return false;
         }
+        onConnect = connectAction;
+        onDisconnect = disconnectAction;
         Platform.setImplicitExit(false);
 
         try {
             Image image = Toolkit.getDefaultToolkit().getImage(
                     SystemTrayHelper.class.getResource(iconResourcePath));
 
-            // 不掛 AWT PopupMenu，改自己處理滑鼠事件
             trayIcon = new TrayIcon(image, tooltip);
             trayIcon.setImageAutoSize(true);
 
@@ -53,14 +54,14 @@ public final class SystemTrayHelper {
                 @Override public void mouseReleased(MouseEvent e) { maybePopup(e); }
                 @Override public void mouseClicked(MouseEvent e) {
                     if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 2) {
-                        showStage(stage);                 // 雙擊左鍵 → 還原視窗
+                        showStage(stage);
                     }
                 }
                 private void maybePopup(MouseEvent e) {
-                    if (e.isPopupTrigger()) {             // 右鍵 → 彈出 JavaFX 選單
+                    if (e.isPopupTrigger()) {
                         int x = e.getXOnScreen();
                         int y = e.getYOnScreen();
-                        Platform.runLater(() -> showFxMenu(stage, x, y));
+                        Platform.runLater(() -> showMenu(stage, x, y));
                     }
                 }
             });
@@ -75,66 +76,84 @@ public final class SystemTrayHelper {
         }
     }
 
-    /** 更新選單裡顯示的 ID（由 MainStage.onIdChanged 呼叫）。 */
     public static void updateId(String id) {
         currentId = (id == null || id.isBlank()) ? "-" : id;
     }
 
-    // ===== 以下都在 JavaFX 執行緒上執行 =====
+    // ===== 自訂選單視窗（FX 執行緒）=====
 
-    private static void showFxMenu(Stage stage, double screenX, double screenY) {
-        ensureAnchor();
-        ContextMenu menu = buildMenu(stage);
-        menu.show(anchorStage, screenX, screenY);
-    }
+    private static void showMenu(Stage mainStage, double screenX, double screenY) {
+        if (menuStage != null && menuStage.isShowing()) {
+            menuStage.hide();
+        }
 
-    private static ContextMenu buildMenu(Stage stage) {
-        MenuItem idItem = new MenuItem("ID: " + currentId);
-        idItem.setDisable(true);
+        VBox box = new VBox();
+        box.getStyleClass().add("tray-menu");
+        box.getChildren().addAll(
+            row("ID: " + currentId, SystemTrayHelper::copyId),
+            sep(),
+            row("開啟拖曳板", () -> showStage(mainStage)),
+            row("關閉拖曳板", mainStage::hide),
+            sep(),
+            row("建立連線", () -> { if (onConnect != null) onConnect.run(); }),
+            row("斷開連線", () -> { if (onDisconnect != null) onDisconnect.run(); }),
+            row("其他設定", () -> new SettingsStage().show()),
+            sep(),
+            row("結束", () -> System.exit(0))
+        );
 
-        MenuItem openItem = new MenuItem("開啟拖曳板");
-        openItem.setOnAction(e -> showStage(stage));
+        menuStage = new Stage();
+        menuStage.initStyle(StageStyle.TRANSPARENT);
+        menuStage.setAlwaysOnTop(true);
 
-        MenuItem closeItem = new MenuItem("關閉拖曳板");
-        closeItem.setOnAction(e -> stage.hide());
-
-        Menu settingsMenu = new Menu("設定");
-        MenuItem openSettings = new MenuItem("其他設定…");
-        openSettings.setOnAction(e -> new SettingsStage().show());
-        settingsMenu.getItems().add(openSettings);
-
-        MenuItem exitItem = new MenuItem("結束");
-        exitItem.setOnAction(e -> {
-            if (trayIcon != null) {
-                SystemTray.getSystemTray().remove(trayIcon);
-            }
-            Platform.exit();
-        });
-
-        return new ContextMenu(
-                idItem, new SeparatorMenuItem(),
-                openItem, closeItem, settingsMenu,
-                new SeparatorMenuItem(), exitItem);
-    }
-
-    /** 隱形的小視窗，純粹當 ContextMenu 的 owner（彈出選單需要一個 owner window）。 */
-    private static void ensureAnchor() {
-        if (anchorStage != null) return;
-        anchorStage = new Stage();
-        anchorStage.initStyle(StageStyle.UTILITY);   // 不顯示在工作列
-        anchorStage.setOpacity(0);                    // 完全透明
-        anchorStage.setWidth(1);
-        anchorStage.setHeight(1);
-        anchorStage.setX(-3000);                      // 移出畫面
-        anchorStage.setY(-3000);
-        anchorStage.setAlwaysOnTop(true);
-
-        Scene scene = new Scene(new Pane(), 1, 1);
+        Scene scene = new Scene(box);
         scene.setFill(Color.TRANSPARENT);
         scene.getStylesheets().add(
                 SystemTrayHelper.class.getResource("/styles/app.css").toExternalForm());
-        anchorStage.setScene(scene);
-        anchorStage.show();
+        menuStage.setScene(scene);
+
+        // 失焦自動關閉
+        menuStage.focusedProperty().addListener((o, was, now) -> {
+            if (!now && menuStage != null) {
+                menuStage.hide();
+            }
+        });
+
+        menuStage.setX(screenX);
+        menuStage.setY(screenY);
+        menuStage.show();
+        // 系統匣在右下角 → 選單往左上方開，並夾住不超出螢幕
+        menuStage.setX(Math.max(0, screenX - menuStage.getWidth()));
+        menuStage.setY(Math.max(0, screenY - menuStage.getHeight()));
+        menuStage.requestFocus();
+    }
+
+    private static Label row(String text, Runnable action) {
+        Label item = new Label(text);
+        item.getStyleClass().add("tray-menu-item");
+        item.setMaxWidth(Double.MAX_VALUE);
+        item.setOnMouseClicked(e -> {
+            if (menuStage != null) {
+                menuStage.hide();   // 先關選單再執行動作
+            }
+            action.run();
+        });
+        return item;
+    }
+
+    private static Region sep() {
+        Region r = new Region();
+        r.getStyleClass().add("tray-menu-sep");
+        r.setMinHeight(1);
+        r.setPrefHeight(1);
+        r.setMaxHeight(1);
+        return r;
+    }
+
+    private static void copyId() {
+        ClipboardContent content = new ClipboardContent();
+        content.putString(currentId);
+        Clipboard.getSystemClipboard().setContent(content);
     }
 
     private static void showStage(Stage stage) {

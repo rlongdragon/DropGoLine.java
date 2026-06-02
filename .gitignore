@@ -32,3 +32,7 @@ replay_pid*
 
 .DS_Store
 .vscode/
+
+# .gitignore
+settings.json
+target/

@@ -24,17 +24,9 @@ mvn package
 
 ## 本機 QUIC 憑證
 
-不要把 private key commit 進 repo。執行會接受 QUIC 連線的 peer 前，先在被忽略的 `target/dev-certs` 產生本機 demo 憑證：
+不要把 private key commit 進 repo。程式第一次需要接受 QUIC direct 連線時，會自動在被忽略的 `target/dev-certs` 產生本機 demo 憑證，不需要安裝 OpenSSL。
 
-```sh
-mkdir -p target/dev-certs
-openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
-  -keyout target/dev-certs/quic-key.pem \
-  -out target/dev-certs/quic-cert.pem \
-  -subj "/CN=localhost"
-```
-
-也可以改用自己的憑證檔：
+正式環境可以改用自己的憑證檔：
 
 ```sh
 QUIC_CERT_PATH=/secure/quic-cert.pem QUIC_KEY_PATH=/secure/quic-key.pem ...
