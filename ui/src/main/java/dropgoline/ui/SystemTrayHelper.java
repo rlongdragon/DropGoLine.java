@@ -11,6 +11,7 @@ import java.awt.event.MouseEvent;
 import javax.swing.SwingUtilities;
 
 import javafx.application.Platform;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
 import javafx.scene.input.Clipboard;
@@ -18,6 +19,7 @@ import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
+import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
@@ -31,6 +33,7 @@ public final class SystemTrayHelper {
     private static volatile String currentId = "-";
     private static Runnable onConnect;
     private static Runnable onDisconnect;
+    private static final double SCREEN_EDGE_PADDING = 4;
 
     public static boolean install(Stage stage, String iconResourcePath, String tooltip,
                                   Runnable connectAction, Runnable disconnectAction) {
@@ -111,6 +114,8 @@ public final class SystemTrayHelper {
         scene.getStylesheets().add(
                 SystemTrayHelper.class.getResource("/styles/app.css").toExternalForm());
         menuStage.setScene(scene);
+        box.applyCss();
+        box.layout();
 
         // 失焦自動關閉
         menuStage.focusedProperty().addListener((o, was, now) -> {
@@ -119,13 +124,39 @@ public final class SystemTrayHelper {
             }
         });
 
-        menuStage.setX(screenX);
-        menuStage.setY(screenY);
+        double menuWidth = Math.ceil(box.prefWidth(-1));
+        double menuHeight = Math.ceil(box.prefHeight(menuWidth));
+        placeMenuWithinScreen(screenX, screenY, menuWidth, menuHeight);
         menuStage.show();
         // 系統匣在右下角 → 選單往左上方開，並夾住不超出螢幕
-        menuStage.setX(Math.max(0, screenX - menuStage.getWidth()));
-        menuStage.setY(Math.max(0, screenY - menuStage.getHeight()));
+        placeMenuWithinScreen(screenX, screenY, menuStage.getWidth(), menuStage.getHeight());
         menuStage.requestFocus();
+    }
+
+    private static void placeMenuWithinScreen(double anchorX, double anchorY, double menuWidth, double menuHeight) {
+        Rectangle2D bounds = screenBoundsFor(anchorX, anchorY);
+        double x = clamp(anchorX - menuWidth,
+                bounds.getMinX() + SCREEN_EDGE_PADDING,
+                bounds.getMaxX() - menuWidth - SCREEN_EDGE_PADDING);
+        double y = clamp(anchorY - menuHeight,
+                bounds.getMinY() + SCREEN_EDGE_PADDING,
+                bounds.getMaxY() - menuHeight - SCREEN_EDGE_PADDING);
+        menuStage.setX(x);
+        menuStage.setY(y);
+    }
+
+    private static Rectangle2D screenBoundsFor(double screenX, double screenY) {
+        return Screen.getScreensForRectangle(screenX, screenY, 1, 1).stream()
+                .findFirst()
+                .orElse(Screen.getPrimary())
+                .getVisualBounds();
+    }
+
+    private static double clamp(double value, double min, double max) {
+        if (max < min) {
+            return min;
+        }
+        return Math.max(min, Math.min(value, max));
     }
 
     private static Label row(String text, Runnable action) {
