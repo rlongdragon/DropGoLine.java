@@ -1,6 +1,8 @@
 package p2p.signaling;
 
 import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 
@@ -303,7 +305,20 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
             return Optional.empty();
         }
         return Optional.ofNullable(UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst("peerId"))
+                .map(this::decodeRepeated)
                 .filter(value -> !value.isBlank());
+    }
+
+    private String decodeRepeated(String value) {
+        String decoded = value;
+        for (int i = 0; i < 3; i++) {
+            String next = URLDecoder.decode(decoded, StandardCharsets.UTF_8);
+            if (next.equals(decoded)) {
+                return next;
+            }
+            decoded = next;
+        }
+        return decoded;
     }
 
     private void sendError(WebSocketSession session, String error) throws Exception {

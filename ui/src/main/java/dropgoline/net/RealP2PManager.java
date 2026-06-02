@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import dropgoline.historyservice.HistoryManager;
+import dropgoline.util.PeerIds;
 import p2p.api.P2p;
 import p2p.api.P2pSessionInstance;
 import p2p.quic.QuicChannel;
@@ -91,31 +92,34 @@ public class RealP2PManager implements P2PManager {
             event -> {
                 switch (event.type()) {
                     case MESSAGE -> {
-                        System.out.println("[DropGoLine][P2PManager] message received from=" + event.from());
-                        HistoryManager.getInstance().addHistory(event.from(), event.message(), true, "TEXT");
+                        String from = PeerIds.canonicalize(event.from());
+                        System.out.println("[DropGoLine][P2PManager] message received from=" + from);
+                        HistoryManager.getInstance().addHistory(from, event.message(), true, "TEXT");
                         if (listener != null) {
-                            listener.onMessageReceived(event.from(), event.message());
+                            listener.onMessageReceived(from, event.message());
                         }
                     }
                     case FILE_OFFER -> {
-                        System.out.println("[DropGoLine][P2PManager] file offer received from=" + event.from()
+                        String from = PeerIds.canonicalize(event.from());
+                        System.out.println("[DropGoLine][P2PManager] file offer received from=" + from
                                 + ", offerId=" + event.offerId() + ", file=" + event.fileName()
                                 + ", size=" + event.fileSize() + ", direct=" + event.direct());
-                        latestOfferByPeer.put(event.from(), event.offerId());
+                        latestOfferByPeer.put(from, event.offerId());
                         if (listener != null) {
-                            listener.onFileOffer(event.from(), event.fileName(), event.fileSize());
+                            listener.onFileOffer(from, event.fileName(), event.fileSize());
                         }
                     }
                     case FILE_SAVED -> {
+                        String from = PeerIds.canonicalize(event.from());
                         Path file = event.file();
-                        System.out.println("[DropGoLine][P2PManager] file saved from=" + event.from()
+                        System.out.println("[DropGoLine][P2PManager] file saved from=" + from
                                 + ", offerId=" + event.offerId() + ", file=" + file
                                 + ", direct=" + event.direct());
                         if (file != null) {
-                            HistoryManager.getInstance().addHistory(event.from(), file.toString(), true, "FILE");
+                            HistoryManager.getInstance().addHistory(from, file.toString(), true, "FILE");
                         }
                         if (file != null && listener != null) {
-                            listener.onTransferComplete(event.from(), file.toFile());
+                            listener.onTransferComplete(from, file.toFile());
                         }
                     }
                     case PEER_JOINED -> reportJoin(event.from());
@@ -137,22 +141,24 @@ public class RealP2PManager implements P2PManager {
     }
 
     private void reportJoin(String peer) {
-        if (peer == null || peer.isBlank() || peer.equals(localName)) {
+        String normalizedPeer = PeerIds.canonicalize(peer);
+        if (normalizedPeer.isBlank() || normalizedPeer.equals(PeerIds.canonicalize(localName))) {
             return;
         }
-        if (reportedPeers.add(peer) && listener != null) {
-            listener.onPeerJoined(peer);
+        if (reportedPeers.add(normalizedPeer) && listener != null) {
+            listener.onPeerJoined(normalizedPeer);
         }
     }
 
     private void reportLeft(String peer) {
-        if (peer == null) {
+        String normalizedPeer = PeerIds.canonicalize(peer);
+        if (normalizedPeer.isBlank()) {
             return;
         }
-        if (reportedPeers.remove(peer)) {
-            latestOfferByPeer.remove(peer);
+        if (reportedPeers.remove(normalizedPeer)) {
+            latestOfferByPeer.remove(normalizedPeer);
             if (listener != null) {
-                listener.onPeerLeft(peer);
+                listener.onPeerLeft(normalizedPeer);
             }
         }
     }

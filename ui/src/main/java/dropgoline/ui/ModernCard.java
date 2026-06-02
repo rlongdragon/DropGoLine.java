@@ -45,10 +45,14 @@ public class ModernCard extends StackPane {
     private boolean hasPendingDownload = false;
 
     public ModernCard(String name) {
+        this(name, name);
+    }
+
+    public ModernCard(String name, String displayName) {
         this.peername = name;
         getStyleClass().add("modern-card");
 
-        nameLabel = new Label(name);
+        nameLabel = new Label(displayName);
         nameLabel.getStyleClass().add("card-name");
 
         contentLabel = new Label("");

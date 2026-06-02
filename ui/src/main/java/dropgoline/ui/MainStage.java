@@ -12,6 +12,7 @@ import dropgoline.model.HistoryItem;
 import dropgoline.net.P2PListener;
 import dropgoline.net.P2PManager;
 import dropgoline.settings.AppSettings;
+import dropgoline.util.PeerIds;
 import javafx.animation.Interpolator;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
@@ -299,7 +300,7 @@ public class MainStage extends Stage implements P2PListener {
             return;
         }
 
-        ModernCard card = new ModernCard(name);
+        ModernCard card = new ModernCard(name, PeerIds.displayName(name));
         card.setText("Ready");
         card.setOnHistoryRequest(() -> openHistoryFor(name));
         card.setOnDownloadRequest(() -> startDownload(name));

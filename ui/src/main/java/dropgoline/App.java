@@ -8,6 +8,7 @@ import dropgoline.net.P2PManager;
 import dropgoline.net.RealP2PManager;
 import dropgoline.settings.AppSettings;
 import dropgoline.ui.MainStage;
+import dropgoline.util.PeerIds;
 
 import javafx.application.Application;
 import javafx.scene.control.TextInputDialog;
@@ -62,7 +63,7 @@ public class App extends Application {
         }
 
         String suffix = java.util.UUID.randomUUID().toString().substring(0, 4);
-        String peerId = name + "#" + suffix;
+        String peerId = name + PeerIds.SUFFIX_SEPARATOR + suffix;
 
         // 2. 組 signaling URL
         String serverIp = settings.getServerIP();
