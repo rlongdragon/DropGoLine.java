@@ -61,6 +61,9 @@ public class App extends Application {
             settings.save();
         }
 
+        String suffix = java.util.UUID.randomUUID().toString().substring(0, 4);
+        String peerId = name + "#" + suffix;
+
         // 2. 組 signaling URL
         String serverIp = settings.getServerIP();
         if (serverIp == null || serverIp.isBlank()) {
@@ -72,11 +75,11 @@ public class App extends Application {
         Path downloadDir = Paths.get(System.getProperty("user.home"), "Downloads", "DropGoLine");
 
         System.out.println("[App] 連線設定：");
-        System.out.println("  name = " + name);
+        System.out.println("  peerId = " + peerId);
         System.out.println("  signaling = " + signalingUrl);
         System.out.println("  downloadDir = " + downloadDir);
 
-        return new RealP2PManager(name, signalingUrl, downloadDir);
+        return new RealP2PManager(peerId, signalingUrl, downloadDir);
     }
 
     public static void main(String[] args) {

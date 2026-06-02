@@ -11,7 +11,7 @@ public class AppSettings {
 
     private static AppSettings instance;
     private static final Path FILE =
-            Paths.get(System.getProperty("user.home"), ".dropgoline", "settings.json");
+            Paths.get(System.getProperty("user.dir"),  "settings.json");
 
     // === 設定欄位 ===
     private String serverIP = "127.0.0.1";

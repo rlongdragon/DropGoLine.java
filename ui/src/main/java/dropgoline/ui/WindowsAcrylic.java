@@ -51,7 +51,7 @@ public final class WindowsAcrylic {
                 if (hr == 0) {
                     System.out.println("[Acrylic] 已套用");
                     Platform.runLater(() ->
-                        stage.getScene().getRoot().setStyle("-fx-background-color: rgba(30,30,30,0.55);"));
+                        stage.getScene().getRoot().setStyle("-fx-background-color: rgba(30,30,30,0.55); -fx-background-radius: 12;"));
                 } else {
                     System.out.println("[Acrylic] 系統不支援（可能非 Win11）,HRESULT=" + hr);
                 }

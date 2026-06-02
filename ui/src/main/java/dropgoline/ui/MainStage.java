@@ -92,6 +92,7 @@ public class MainStage extends Stage implements P2PListener {
         scene.getStylesheets().addAll(
                 getClass().getResource("/styles/app.css").toExternalForm(),
                 getClass().getResource("/styles/modern-card.css").toExternalForm());
+        root.getStyleClass().add("main-stage");
         setScene(scene);
 
         ResizeHelper.install(this);
@@ -305,6 +306,11 @@ public class MainStage extends Stage implements P2PListener {
 
         cards.put(name, card);
         cardPane.getChildren().add(card);
+    }
+
+    private static String stripSuffix(String peerId){
+        int i = peerId.lastIndexOf("#");
+        return (i > 0) ? peerId.substring(0, i) : peerId;
     }
 
     private void removePeer(String name) {
