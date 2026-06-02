@@ -40,21 +40,30 @@ public class RealP2PManager implements P2PManager {
 
     @Override
     public void connect(String code) {
+        System.out.println("[DropGoLine][P2PManager] connect requested code=" + code
+                + ", localName=" + localName + ", signalingUrl=" + signalingUrl
+                + ", downloadDir=" + downloadDir);
         // 背景執行緒：建連線可能要數秒，不能卡 UI
         new Thread(() -> {
             try {
+                System.out.println("[DropGoLine][P2PManager] creating download directory " + downloadDir);
                 Files.createDirectories(downloadDir);
 
                 if (p2p == null) {
+                    System.out.println("[DropGoLine][P2PManager] connecting to signaling server");
                     p2p = P2p.connect(localName, signalingUrl, downloadDir);
                 }
 
                 if (code == null || code.isBlank()) {
+                    System.out.println("[DropGoLine][P2PManager] creating group");
                     String newCode = p2p.createGroup();      // 建立新 group
                     group = p2p.currentGroup();
+                    System.out.println("[DropGoLine][P2PManager] group created id=" + newCode);
                     if (listener != null) listener.onIdChanged(newCode);
                 } else {
+                    System.out.println("[DropGoLine][P2PManager] joining group id=" + code);
                     group = p2p.joinGroup(code);             // 加入既有 group
+                    System.out.println("[DropGoLine][P2PManager] group joined id=" + code);
                     if (listener != null) listener.onIdChanged(code);
                 }
 
@@ -72,11 +81,15 @@ public class RealP2PManager implements P2PManager {
             event -> {
                 switch (event.type()) {
                     case MESSAGE -> {
+                        System.out.println("[DropGoLine][P2PManager] message received from=" + event.from());
                         if (listener != null) {
                             listener.onMessageReceived(event.from(), event.message());
                         }
                     }
                     case FILE_OFFER -> {
+                        System.out.println("[DropGoLine][P2PManager] file offer received from=" + event.from()
+                                + ", offerId=" + event.offerId() + ", file=" + event.fileName()
+                                + ", size=" + event.fileSize() + ", direct=" + event.direct());
                         latestOfferByPeer.put(event.from(), event.offerId());
                         if (listener != null) {
                             listener.onFileOffer(event.from(), event.fileName(), event.fileSize());
@@ -84,6 +97,9 @@ public class RealP2PManager implements P2PManager {
                     }
                     case FILE_SAVED -> {
                         Path file = event.file();
+                        System.out.println("[DropGoLine][P2PManager] file saved from=" + event.from()
+                                + ", offerId=" + event.offerId() + ", file=" + file
+                                + ", direct=" + event.direct());
                         if (file != null && listener != null) {
                             listener.onTransferComplete(event.from(), file.toFile());
                         }
@@ -151,10 +167,20 @@ public class RealP2PManager implements P2PManager {
 
     @Override
     public void sendFile(String peerName, File file) {
-        if (group == null) return;
+        System.out.println("[DropGoLine][P2PManager] sendFile requested peer=" + peerName
+                + ", file=" + file.getAbsolutePath() + ", size=" + file.length()
+                + ", groupReady=" + (group != null));
+        if (group == null) {
+            System.out.println("[DropGoLine][P2PManager] sendFile skipped because group is null");
+            return;
+        }
         try {
             group.send(null, file.toPath(), peerName);
+            System.out.println("[DropGoLine][P2PManager] sendFile offer submitted peer=" + peerName
+                    + ", file=" + file.getName());
         } catch (Exception ex) {
+            System.err.println("[DropGoLine][P2PManager] sendFile failed peer=" + peerName
+                    + ", file=" + file.getAbsolutePath() + ": " + ex.getMessage());
             ex.printStackTrace();
         }
     }
@@ -162,13 +188,19 @@ public class RealP2PManager implements P2PManager {
     @Override
     public void requestDownload(String peerName) {
         String offerId = latestOfferByPeer.get(peerName);
+        System.out.println("[DropGoLine][P2PManager] requestDownload peer=" + peerName
+                + ", offerId=" + offerId + ", groupReady=" + (group != null));
         if (offerId == null || group == null) {
             System.err.println("[P2P] 找不到 " + peerName + " 的待下載 offer");
             return;
         }
         try {
             group.save(offerId);    // 後端背景下載，完成時觸發 FILE_SAVED
+            System.out.println("[DropGoLine][P2PManager] requestDownload submitted peer=" + peerName
+                    + ", offerId=" + offerId);
         } catch (Exception ex) {
+            System.err.println("[DropGoLine][P2PManager] requestDownload failed peer=" + peerName
+                    + ", offerId=" + offerId + ": " + ex.getMessage());
             ex.printStackTrace();
         }
     }
@@ -185,10 +217,19 @@ public class RealP2PManager implements P2PManager {
 
     @Override
     public void broadcastFile(File file) {
-        if (group == null) return;
+        System.out.println("[DropGoLine][P2PManager] broadcastFile requested file="
+                + file.getAbsolutePath() + ", size=" + file.length()
+                + ", groupReady=" + (group != null));
+        if (group == null) {
+            System.out.println("[DropGoLine][P2PManager] broadcastFile skipped because group is null");
+            return;
+        }
         try {
             group.send(file.toPath());
+            System.out.println("[DropGoLine][P2PManager] broadcastFile offer submitted file=" + file.getName());
         } catch (Exception ex) {
+            System.err.println("[DropGoLine][P2PManager] broadcastFile failed file="
+                    + file.getAbsolutePath() + ": " + ex.getMessage());
             ex.printStackTrace();
         }
     }

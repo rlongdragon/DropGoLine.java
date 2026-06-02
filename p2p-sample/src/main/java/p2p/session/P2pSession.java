@@ -93,23 +93,31 @@ public class P2pSession implements AutoCloseable {
     }
 
     public void offerFile(Path path) throws IOException {
+        System.out.println("[DropGoLine][DirectSession] offerFile requested local=" + localPeerId
+                + ", remote=" + remotePeerId + ", path=" + path);
         if (!Files.isRegularFile(path)) {
             throw new IOException("file does not exist: " + path);
         }
 
         String id = UUID.randomUUID().toString().substring(0, 8);
         localOffers.put(id, path);
+        long size = Files.size(path);
+        System.out.println("[DropGoLine][DirectSession] sending file offer id=" + id
+                + ", remote=" + remotePeerId + ", file=" + path.getFileName()
+                + ", size=" + size);
         synchronized (output) {
             output.writeInt(SessionProtocol.TYPE_FILE_OFFER);
             output.writeUTF(id);
             output.writeUTF(path.getFileName().toString());
-            output.writeLong(Files.size(path));
+            output.writeLong(size);
             output.flush();
         }
         listener.onNotice(localPeerId, "offered " + path + " as " + id);
     }
 
     public void requestFile(String id) throws IOException {
+        System.out.println("[DropGoLine][DirectSession] requestFile id=" + id
+                + ", local=" + localPeerId + ", remote=" + remotePeerId);
         synchronized (output) {
             output.writeInt(SessionProtocol.TYPE_FILE_REQUEST);
             output.writeUTF(id);
@@ -196,16 +204,21 @@ public class P2pSession implements AutoCloseable {
         String id = input.readUTF();
         String fileName = sanitizeFileName(input.readUTF());
         long size = input.readLong();
+        System.out.println("[DropGoLine][DirectSession] received file offer id=" + id
+                + ", from=" + remotePeerId + ", file=" + fileName + ", size=" + size);
         remoteOffers.put(id, new RemoteOffer(fileName, size));
         listener.onFileOffer(remotePeerId, id, fileName, size);
     }
 
     private void sendRequestedFile(String id) throws IOException {
+        System.out.println("[DropGoLine][DirectSession] received file request id=" + id
+                + ", from=" + remotePeerId);
         // Security boundary: the peer may request only an opaque offer id.
         // It never supplies a path, and we only serve files explicitly shared
         // earlier by this local process through /file.
         Path path = localOffers.get(id);
         if (path == null) {
+            System.out.println("[DropGoLine][DirectSession] file request missing local offer id=" + id);
             sendNotice("file offer not found: " + id);
             return;
         }
@@ -214,6 +227,8 @@ public class P2pSession implements AutoCloseable {
 
     private void sendFile(String id, Path path) throws IOException {
         long size = Files.size(path);
+        System.out.println("[DropGoLine][DirectSession] sendFile start id=" + id
+                + ", remote=" + remotePeerId + ", file=" + path + ", size=" + size);
         synchronized (output) {
             output.writeInt(SessionProtocol.TYPE_FILE_START);
             output.writeUTF(id);
@@ -223,11 +238,18 @@ public class P2pSession implements AutoCloseable {
             byte[] buffer = new byte[SessionProtocol.CHUNK_SIZE];
             try (InputStream fileInput = Files.newInputStream(path)) {
                 int read;
+                int chunkIndex = 0;
+                long sent = 0;
                 while ((read = fileInput.read(buffer)) >= 0) {
                     output.writeInt(SessionProtocol.TYPE_FILE_CHUNK);
                     output.writeUTF(id);
                     output.writeInt(read);
                     output.write(buffer, 0, read);
+                    sent += read;
+                    System.out.println("[DropGoLine][DirectSession] sendFile chunk id=" + id
+                            + ", chunk=" + chunkIndex + ", bytes=" + read
+                            + ", sent=" + sent + "/" + size);
+                    chunkIndex++;
                 }
             }
 
@@ -235,6 +257,8 @@ public class P2pSession implements AutoCloseable {
             output.writeUTF(id);
             output.flush();
         }
+        System.out.println("[DropGoLine][DirectSession] sendFile complete id=" + id
+                + ", remote=" + remotePeerId + ", file=" + path);
         listener.onNotice(localPeerId, "sent " + path + " for " + id);
     }
 
@@ -244,9 +268,12 @@ public class P2pSession implements AutoCloseable {
         long size = input.readLong();
         Files.createDirectories(downloadDirectory);
         Path target = downloadDirectory.resolve(fileName);
+        System.out.println("[DropGoLine][DirectSession] receiveFile start id=" + id
+                + ", from=" + remotePeerId + ", target=" + target + ", size=" + size);
 
         long received = 0;
         try (OutputStream fileOutput = Files.newOutputStream(target)) {
+            int chunkIndex = 0;
             while (true) {
                 int type = input.readInt();
                 if (type == SessionProtocol.TYPE_FILE_END) {
@@ -271,6 +298,10 @@ public class P2pSession implements AutoCloseable {
                 input.readFully(chunk);
                 fileOutput.write(chunk);
                 received += length;
+                System.out.println("[DropGoLine][DirectSession] receiveFile chunk id=" + id
+                        + ", chunk=" + chunkIndex + ", bytes=" + length
+                        + ", received=" + received + "/" + size);
+                chunkIndex++;
             }
         }
 
@@ -278,6 +309,9 @@ public class P2pSession implements AutoCloseable {
             throw new IOException("file size mismatch for " + id + ": expected " + size + ", got " + received);
         }
         remoteOffers.remove(id);
+        System.out.println("[DropGoLine][DirectSession] receiveFile complete id=" + id
+                + ", from=" + remotePeerId + ", target=" + target
+                + ", received=" + received);
         listener.onFileSaved(remotePeerId, id, target);
     }
 
