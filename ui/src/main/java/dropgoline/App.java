@@ -34,6 +34,16 @@ public class App extends Application {
 
         MainStage mainStage = new MainStage(p2p);
         mainStage.show();
+
+        AppSettings s = AppSettings.current();
+        String lastCode = s.getLastGroupCode();
+        if (s.isEnableAutoReconnect() && lastCode != null && !lastCode.isBlank()) {
+            System.out.println("[App] 嘗試重連上次房間：" + lastCode);
+            p2p.connect(lastCode);
+        }else {
+            System.out.println("[App] 自動建立新房間");
+            p2p.connect("");
+        }
     }
 
     private P2PManager buildRealP2P() {

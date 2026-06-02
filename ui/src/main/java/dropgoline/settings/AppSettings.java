@@ -1,60 +1,80 @@
 package dropgoline.settings;
 
-/**
- * 暫時版（mock）。等開發者 A 的真版本好了再換掉。
- * 真版本需要提供一樣的方法：current(), 各 getter/setter, save()
- */
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 public class AppSettings {
 
-    // === Singleton ===
     private static AppSettings instance;
+    private static final Path FILE =
+            Paths.get(System.getProperty("user.home"), ".dropgoline", "settings.json");
 
-    public static AppSettings current() {
-        if (instance == null) {
-            instance = new AppSettings();
-        }
-        return instance;
-    }
-
-    private AppSettings() {
-        // 私有建構子，外界不能 new，只能用 current()
-    }
-
-    // === 設定欄位（含預設值）===
-    private String serverIP = "23.146.248.110";
+    // === 設定欄位 ===
+    private String serverIP = "127.0.0.1";
     private String deviceName = "";
     private boolean autoClipboardCopy = false;
     private boolean autoClipboardSync = false;
     private boolean enableAutoReconnect = true;
     private boolean allowDiscovery = true;
+    private String lastGroupCode = "";       // 給自動重連用
 
-    // === Getters / Setters ===
+    public AppSettings() { }   // Jackson 需要無參數建構子
+
+    public static synchronized AppSettings current() {
+        if (instance == null) {
+            instance = load();
+        }
+        return instance;
+    }
+
+    private static AppSettings load() {
+        try {
+            File f = FILE.toFile();
+            if (f.exists()) {
+                AppSettings loaded = new ObjectMapper().readValue(f, AppSettings.class);
+                System.out.println("[Settings] 已讀取設定：" + FILE);
+                return loaded;
+            }
+        } catch (IOException ex) {
+            System.err.println("[Settings] 讀取失敗，使用預設：" + ex.getMessage());
+        }
+        return new AppSettings();
+    }
+
+    public void save() {
+        try {
+            File f = FILE.toFile();
+            f.getParentFile().mkdirs();
+            new ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(f, this);
+            System.out.println("[Settings] 已儲存：" + FILE);
+        } catch (IOException ex) {
+            System.err.println("[Settings] 儲存失敗：" + ex.getMessage());
+        }
+    }
+
+    // === getters / setters（Jackson 與 SettingsStage 都會用到）===
     public String getServerIP() { return serverIP; }
-    public void setServerIP(String serverIP) { this.serverIP = serverIP; }
+    public void setServerIP(String v) { serverIP = v; }
 
     public String getDeviceName() { return deviceName; }
-    public void setDeviceName(String deviceName) { this.deviceName = deviceName; }
+    public void setDeviceName(String v) { deviceName = v; }
 
     public boolean isAutoClipboardCopy() { return autoClipboardCopy; }
-    public void setAutoClipboardCopy(boolean v) { this.autoClipboardCopy = v; }
+    public void setAutoClipboardCopy(boolean v) { autoClipboardCopy = v; }
 
     public boolean isAutoClipboardSync() { return autoClipboardSync; }
-    public void setAutoClipboardSync(boolean v) { this.autoClipboardSync = v; }
+    public void setAutoClipboardSync(boolean v) { autoClipboardSync = v; }
 
     public boolean isEnableAutoReconnect() { return enableAutoReconnect; }
-    public void setEnableAutoReconnect(boolean v) { this.enableAutoReconnect = v; }
+    public void setEnableAutoReconnect(boolean v) { enableAutoReconnect = v; }
 
     public boolean isAllowDiscovery() { return allowDiscovery; }
-    public void setAllowDiscovery(boolean v) { this.allowDiscovery = v; }
+    public void setAllowDiscovery(boolean v) { allowDiscovery = v; }
 
-    // === 儲存（暫時版：只印出來，真版本會寫進檔案）===
-    public void save() {
-        System.out.println("[AppSettings] 儲存（暫時版，只印出）：");
-        System.out.println("  serverIP=" + serverIP);
-        System.out.println("  deviceName=" + deviceName);
-        System.out.println("  autoClipboardCopy=" + autoClipboardCopy);
-        System.out.println("  autoClipboardSync=" + autoClipboardSync);
-        System.out.println("  enableAutoReconnect=" + enableAutoReconnect);
-        System.out.println("  allowDiscovery=" + allowDiscovery);
-    }
+    public String getLastGroupCode() { return lastGroupCode; }
+    public void setLastGroupCode(String v) { lastGroupCode = v; }
 }

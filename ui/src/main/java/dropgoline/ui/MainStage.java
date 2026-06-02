@@ -10,7 +10,13 @@ import dropgoline.net.P2PListener;
 import dropgoline.net.P2PManager;
 import dropgoline.settings.AppSettings;
 
+import javafx.animation.Interpolator;
+import javafx.animation.KeyFrame;
+import javafx.animation.KeyValue;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
+import javafx.beans.property.DoubleProperty;
+import javafx.beans.property.SimpleDoubleProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -34,12 +40,14 @@ import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
+import javafx.util.Duration;
 
 public class MainStage extends Stage implements P2PListener {
     private final P2PManager p2p;
     private final FlowPane cardPane;
     private final Map<String, ModernCard> cards = new HashMap<>();
     private final Map<String, ProgressStage> activeProgress = new HashMap<>();
+    private final Map<String, Timeline> progressSims = new HashMap<>();
 
     private double dragOffsetX;
     private double dragOffsetY;
@@ -51,12 +59,14 @@ public class MainStage extends Stage implements P2PListener {
         initStyle(StageStyle.TRANSPARENT);
 
         setTitle("DropGoLine");
+        setAlwaysOnTop(true);
         setWidth(500);
         setHeight(400);
 
         loadIcon();
 
-        trayInstalled = SystemTrayHelper.install(this, "/icons/app.png", "DropGoLine", this::handleConnect, p2p::disconnect);
+        trayInstalled = SystemTrayHelper.install(this, "/icons/app.png", "DropGoLine", this::handleConnect,
+                p2p::disconnect);
 
         HBox topBar = buildTopBar();
 
@@ -66,9 +76,8 @@ public class MainStage extends Stage implements P2PListener {
         cardPane.setPadding(new Insets(15));
 
         SendCard sendCard = new SendCard(
-            files -> files.forEach(p2p::broadcastFile),
-            p2p::broadcastText
-        );
+                files -> files.forEach(p2p::broadcastFile),
+                p2p::broadcastText);
         cardPane.getChildren().add(sendCard);
 
         ScrollPane scrollPane = new ScrollPane(cardPane);
@@ -127,11 +136,11 @@ public class MainStage extends Stage implements P2PListener {
 
     private HBox buildStatusBar() {
         ImageView iconView = new ImageView();
-        try (InputStream in = getClass().getResourceAsStream("/icons/app.png")){
-            if (in != null){
+        try (InputStream in = getClass().getResourceAsStream("/icons/app.png")) {
+            if (in != null) {
                 iconView.setImage(new Image(in, 18, 18, true, true));
             }
-        }catch (Exception ignored){
+        } catch (Exception ignored) {
         }
 
         MenuBar menuBar = buildMenuBar();
@@ -189,6 +198,17 @@ public class MainStage extends Stage implements P2PListener {
         ProgressStage progressStage = new ProgressStage(peerName + " 的檔案");
         activeProgress.put(peerName, progressStage);
         progressStage.show();
+        progressStage.updateProgress(0);
+
+        DoubleProperty p = new SimpleDoubleProperty(0);
+        p.addListener((obs, ov, nv) -> progressStage.updateProgress(nv.doubleValue()));
+        Timeline sim = new Timeline(
+            new KeyFrame(Duration.ZERO, new KeyValue(p, 0)),
+            new KeyFrame(Duration.seconds(10), new KeyValue(p, 0.9, Interpolator.EASE_IN))
+        );
+        progressSims.put(peerName, sim);
+        sim.play();
+
         p2p.requestDownload(peerName);
     }
 
@@ -203,6 +223,9 @@ public class MainStage extends Stage implements P2PListener {
     @Override
     public void onIdChanged(String id) {
         SystemTrayHelper.updateId(id);
+        AppSettings s = AppSettings.current();
+        s.setLastGroupCode(id);
+        s.save();
     }
 
     @Override
@@ -252,8 +275,14 @@ public class MainStage extends Stage implements P2PListener {
     @Override
     public void onTransferComplete(String peerName, File file) {
         Platform.runLater(() -> {
+            Timeline sim = progressSims.remove(peerName);
+            if (sim != null) {
+                sim.stop();
+            }
+
             ProgressStage ps = activeProgress.remove(peerName);
             if (ps != null) {
+                ps.updateProgress(1);
                 ps.close();
             }
 
@@ -282,6 +311,11 @@ public class MainStage extends Stage implements P2PListener {
         ModernCard card = cards.remove(name);
         if (card != null) {
             cardPane.getChildren().remove(card);
+        }
+
+        Timeline sim = progressSims.remove(name);
+        if (sim != null) {
+            sim.stop();
         }
 
         ProgressStage ps = activeProgress.remove(name);

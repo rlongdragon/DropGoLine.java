@@ -1,5 +1,6 @@
 .root {
     -fx-background-color: #232323;
+    -fx-background-radius: 12;
 }
 /* ---- 視窗按鈕（縮小 / 關閉）---- */
 .button.window-button {
@@ -164,4 +165,26 @@
 .send-card-label {
     -fx-text-fill: #cfcfcf;
     -fx-font-size: 13px;
+}
+
+/* 系統匣自訂選單 */
+.tray-menu {
+    -fx-background-color: #2b2b2b;
+    -fx-background-radius: 8;
+    -fx-padding: 4;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 14, 0, 0, 4);
+}
+.tray-menu-item {
+    -fx-text-fill: #e6e6e6;
+    -fx-font-size: 13px;
+    -fx-padding: 7 28 7 14;
+    -fx-background-radius: 5;
+    -fx-cursor: hand;
+}
+.tray-menu-item:hover {
+    -fx-background-color: #3d6fb4;   /* 跟圖 2 一樣的藍色 highlight */
+    -fx-text-fill: white;
+}
+.tray-menu-sep {
+    -fx-background-color: rgba(255, 255, 255, 0.12);
 }

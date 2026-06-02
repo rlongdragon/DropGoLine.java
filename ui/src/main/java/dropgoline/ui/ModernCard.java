@@ -1,7 +1,6 @@
 package dropgoline.ui;
 
 import java.io.File;
-import java.security.Key;
 import java.util.List;
 
 import javafx.animation.Interpolator;
@@ -78,50 +77,11 @@ public class ModernCard extends StackPane {
 
         setPrefSize(200, 150);
 
-        setupDragReceiving();
         setupDragSource();
         setupContextMenu();
         setupHoverAnimation();
     }
 
-    private void setupDragReceiving() {
-        setOnDragOver(event -> {
-            Dragboard db = event.getDragboard();
-            if (db.hasFiles() || db.hasString()) {
-                event.acceptTransferModes(TransferMode.COPY);
-            }
-            event.consume();
-        });
-
-        setOnDragEntered(event -> {
-            Dragboard db = event.getDragboard();
-            if (db.hasFiles() || db.hasString()) {
-                getStyleClass().add("drag-over");
-            }
-            event.consume();
-        });
-
-        setOnDragExited(event -> {
-            getStyleClass().remove("drag-over");
-            event.consume();
-        });
-
-        setOnDragDropped(event -> {
-            Dragboard db = event.getDragboard();
-            boolean success = false;
-
-            if (db.hasFiles()) {
-                setFile(db.getFiles().get(0));
-                success = true;
-            } else if (db.hasString()) {
-                setText(db.getString());
-                success = true;
-            }
-            event.setDropCompleted(success);
-            getStyleClass().remove("drag-over");
-            event.consume();
-        });
-    }
 
     private void setupDragSource() {
         setOnDragDetected(event -> {
