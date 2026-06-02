@@ -22,13 +22,8 @@ import javafx.beans.property.SimpleDoubleProperty;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.Menu;
-import javafx.scene.control.MenuBar;
-import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
-import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
@@ -120,7 +115,7 @@ public class MainStage extends Stage implements P2PListener {
             }
         });
 
-        HBox bar = new HBox(buildStatusBar(), spacer, minBtn, closeBtn);
+        HBox bar = new HBox(spacer, minBtn, closeBtn);
         bar.getStyleClass().add("top-bar");
         bar.setMinHeight(28);
         bar.setPickOnBounds(true);
@@ -135,22 +130,6 @@ public class MainStage extends Stage implements P2PListener {
         return bar;
     }
 
-    private HBox buildStatusBar() {
-        ImageView iconView = new ImageView();
-        try (InputStream in = getClass().getResourceAsStream("/icons/app.png")) {
-            if (in != null) {
-                iconView.setImage(new Image(in, 18, 18, true, true));
-            }
-        } catch (IOException | RuntimeException ignored) {
-        }
-
-        HBox bar = new HBox(8, iconView, buildMenuBar());
-        bar.getStyleClass().add("status-bar");
-        bar.setPadding(new Insets(2, 8, 2, 6));
-        bar.setMinHeight(30);
-        return bar;
-    }
-
     private void loadIcon() {
         try (InputStream iconStream = getClass().getResourceAsStream("/icons/app.png")) {
             if (iconStream != null) {
@@ -161,21 +140,6 @@ public class MainStage extends Stage implements P2PListener {
         } catch (IOException | RuntimeException ex) {
             System.out.println("[Icon] failed to load: " + ex.getMessage());
         }
-    }
-
-    private MenuBar buildMenuBar() {
-        MenuItem connectItem = new MenuItem("Connect");
-        connectItem.setOnAction(e -> handleConnect());
-
-        MenuItem disconnectItem = new MenuItem("Disconnect");
-        disconnectItem.setOnAction(e -> p2p.disconnect());
-
-        MenuItem settingsItem = new MenuItem("Settings");
-        settingsItem.setOnAction(e -> new SettingsStage().show());
-
-        Menu optionsMenu = new Menu("Options");
-        optionsMenu.getItems().addAll(connectItem, disconnectItem, new SeparatorMenuItem(), settingsItem);
-        return new MenuBar(optionsMenu);
     }
 
     private void handleConnect() {
