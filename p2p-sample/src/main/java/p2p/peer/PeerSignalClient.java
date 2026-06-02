@@ -15,6 +15,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -122,7 +123,7 @@ public class PeerSignalClient implements AutoCloseable {
         synchronized (sendLock) {
             try {
                 webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-            } catch (Exception ignored) {
+            } catch (CompletionException ignored) {
             }
         }
     }
@@ -141,7 +142,7 @@ public class PeerSignalClient implements AutoCloseable {
                     if (!"registered".equals(message.type())) {
                         incoming.add(message);
                     }
-                } catch (Exception e) {
+                } catch (JsonProcessingException e) {
                     incoming.add(new SignalMessage("error", "signal", peerId, objectMapper.valueToTree(e.getMessage())));
                 }
             }

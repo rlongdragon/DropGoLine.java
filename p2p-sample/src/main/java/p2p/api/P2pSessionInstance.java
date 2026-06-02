@@ -36,6 +36,7 @@ import p2p.quic.QuicTransportService;
 import p2p.signaling.SignalMessage;
 import p2p.transfer.FileChecksums;
 
+@SuppressWarnings("BroadCatchBlock")
 public final class P2pSessionInstance implements AutoCloseable {
     private static final Duration SIGNAL_POLL = Duration.ofMillis(500);
     private static final Duration SIGNAL_TIMEOUT = Duration.ofMinutes(5);

@@ -17,11 +17,13 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public final class Client {
     private static final int SERVER_PORT = 8888;
@@ -44,51 +46,55 @@ public final class Client {
     private Client() {
     }
 
+    @SuppressWarnings("resource")
     public static void main(String[] args) {
         System.out.println("=== P2P Chat Client (Smart Hybrid) ===");
-        Scanner scanner = new Scanner(System.in, StandardCharsets.UTF_8);
+        Runtime.getRuntime().addShutdownHook(new Thread(Client::closeAll, "legacy-client-shutdown"));
 
-        System.out.print("Enter your name: ");
-        myName = scanner.nextLine();
+        try (Scanner scanner = new Scanner(System.in, StandardCharsets.UTF_8)) {
 
-        setupP2PListener();
+            System.out.print("Enter your name: ");
+            myName = scanner.nextLine();
 
-        System.out.print("Enter Server IP (default 127.0.0.1): ");
-        String serverIp = scanner.nextLine();
-        if (serverIp.isBlank()) {
-            serverIp = "127.0.0.1";
-        }
+            setupP2PListener();
 
-        try {
-            serverSocket = new Socket(serverIp, SERVER_PORT);
-            serverReader = new BufferedReader(new InputStreamReader(serverSocket.getInputStream(), StandardCharsets.UTF_8));
-            serverWriter = new BufferedWriter(new OutputStreamWriter(serverSocket.getOutputStream(), StandardCharsets.UTF_8));
+            System.out.print("Enter Server IP (default 127.0.0.1): ");
+            String serverIp = scanner.nextLine();
+            if (serverIp.isBlank()) {
+                serverIp = "127.0.0.1";
+            }
 
-            sendToServer("REGISTER|" + myName + "|" + myLocalIp + "|" + myLocalPort);
-            executor.submit(Client::serverListenLoop);
-            executor.submit(Client::heartbeatLoop);
-        } catch (IOException e) {
-            System.out.println("Cannot connect to server: " + e.getMessage());
-            return;
-        }
+            try {
+                serverSocket = new Socket(serverIp, SERVER_PORT);
+                serverReader = new BufferedReader(new InputStreamReader(serverSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new BufferedWriter(new OutputStreamWriter(serverSocket.getOutputStream(), StandardCharsets.UTF_8));
 
-        System.out.println("1. Create Room");
-        System.out.println("2. Join Room");
-        String choice = scanner.nextLine();
+                sendToServer("REGISTER|" + myName + "|" + myLocalIp + "|" + myLocalPort);
+                executor.submit(Client::serverListenLoop);
+                executor.submit(Client::heartbeatLoop);
+            } catch (IOException e) {
+                System.out.println("Cannot connect to server: " + e.getMessage());
+                return;
+            }
 
-        if ("1".equals(choice)) {
-            sendToServer("CREATE");
-            System.out.println("Creating room... waiting for code.");
-        } else if ("2".equals(choice)) {
-            System.out.print("Enter Code: ");
-            String code = scanner.nextLine();
-            sendToServer("JOIN|" + code);
-        }
+            System.out.println("1. Create Room");
+            System.out.println("2. Join Room");
+            String choice = scanner.nextLine();
 
-        while (scanner.hasNextLine()) {
-            String msg = scanner.nextLine();
-            if (!msg.isBlank()) {
-                broadcastMessage(msg);
+            if ("1".equals(choice)) {
+                sendToServer("CREATE");
+                System.out.println("Creating room... waiting for code.");
+            } else if ("2".equals(choice)) {
+                System.out.print("Enter Code: ");
+                String code = scanner.nextLine();
+                sendToServer("JOIN|" + code);
+            }
+
+            while (scanner.hasNextLine()) {
+                String msg = scanner.nextLine();
+                if (!msg.isBlank()) {
+                    broadcastMessage(msg);
+                }
             }
         }
     }
@@ -103,7 +109,7 @@ public final class Client {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
-            } catch (Exception ignored) {
+            } catch (RuntimeException ignored) {
             }
         }
     }
@@ -239,7 +245,7 @@ public final class Client {
                         setupDirectConnection(client);
                         return;
                     }
-                } catch (Exception ignored) {
+                } catch (InterruptedException | ExecutionException | TimeoutException ignored) {
                 }
             }
         });
@@ -353,6 +359,28 @@ public final class Client {
     }
 
     private static void closeQuietly(Socket socket) {
+        if (socket == null) {
+            return;
+        }
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void closeAll() {
+        closeQuietly(serverSocket);
+        closeQuietly(p2pListener);
+        for (Socket socket : peers.values()) {
+            closeQuietly(socket);
+        }
+        executor.shutdownNow();
+    }
+
+    private static void closeQuietly(ServerSocket socket) {
+        if (socket == null) {
+            return;
+        }
         try {
             socket.close();
         } catch (IOException ignored) {

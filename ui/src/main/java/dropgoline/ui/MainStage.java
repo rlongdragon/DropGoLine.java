@@ -1,6 +1,7 @@
 package dropgoline.ui;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.List;
@@ -39,9 +40,6 @@ import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import javafx.util.Duration;
-import p2p.transfer.ChecksumService;
-import p2p.transfer.FileTransferProtocol;
-import p2p.transfer.FileTransferService;
 
 public class MainStage extends Stage implements P2PListener {
     private final P2PManager p2p;
@@ -49,21 +47,16 @@ public class MainStage extends Stage implements P2PListener {
     private final Map<String, ModernCard> cards = new HashMap<>();
     private final Map<String, ProgressStage> activeProgress = new HashMap<>();
     private final Map<String, Timeline> progressSims = new HashMap<>();
-    private final FileTransferService transferService;
     private final Map<String, File> pendingFiles = new HashMap<>();
-    private final Map<String, File> receivedFilesById = new HashMap<>();
 
     private File lastReceivedFile;
     private double dragOffsetX;
     private double dragOffsetY;
     private boolean trayInstalled = false;
 
+    @SuppressWarnings("LeakingThisInConstructor")
     public MainStage(P2PManager p2p) {
         this.p2p = p2p;
-
-        ChecksumService checksumService = new ChecksumService();
-        FileTransferProtocol protocol = new FileTransferProtocol(checksumService);
-        this.transferService = new FileTransferService(protocol);
 
         initStyle(StageStyle.TRANSPARENT);
         setTitle("DropGoLine");
@@ -148,7 +141,7 @@ public class MainStage extends Stage implements P2PListener {
             if (in != null) {
                 iconView.setImage(new Image(in, 18, 18, true, true));
             }
-        } catch (Exception ignored) {
+        } catch (IOException | RuntimeException ignored) {
         }
 
         HBox bar = new HBox(8, iconView, buildMenuBar());
@@ -165,7 +158,7 @@ public class MainStage extends Stage implements P2PListener {
             } else {
                 System.out.println("[Icon] /icons/app.png not found");
             }
-        } catch (Exception ex) {
+        } catch (IOException | RuntimeException ex) {
             System.out.println("[Icon] failed to load: " + ex.getMessage());
         }
     }
@@ -331,7 +324,6 @@ public class MainStage extends Stage implements P2PListener {
             if (card != null) {
                 card.setFile(file);
                 card.setDownloaded(true);
-                receivedFilesById.put(file.getName(), file);
             }
 
             System.out.println("Transfer complete: " + file.getName());

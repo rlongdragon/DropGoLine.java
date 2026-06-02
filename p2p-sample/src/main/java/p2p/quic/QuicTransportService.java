@@ -51,6 +51,7 @@ public class QuicTransportService {
         }
     }
 
+    @SuppressWarnings("deprecation")
     public ServerConnector accept(DatagramSocket iceSocket, InputStream certificate, InputStream privateKey,
                                   IncomingStreamHandler handler) throws Exception {
         ServerConnectionConfig config = ServerConnectionConfig.builder()

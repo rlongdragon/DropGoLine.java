@@ -3,7 +3,6 @@ package sample.chat;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -12,7 +11,6 @@ import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import p2p.api.P2p;
@@ -483,10 +481,6 @@ public class P2pChatCli {
         return space < 0 ? trimmed : trimmed.substring(0, space);
     }
 
-    private static void waitForConsoleInput() throws InterruptedException {
-        TimeUnit.MILLISECONDS.sleep(200);
-    }
-
     private static PrivateMessage parsePrivateMessage(String value) {
         String[] parts = value.trim().split("\\s+", 2);
         if (parts.length < 2 || parts[0].isBlank() || parts[1].isBlank()) {
@@ -546,20 +540,6 @@ public class P2pChatCli {
     private static String userMessage(Exception e) {
         String message = e.getMessage();
         return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
-    }
-
-    private static String signalErrorText(SignalMessage message) {
-        JsonNode payload = message.payload();
-        if (payload == null || payload.isNull()) {
-            return "server rejected signal";
-        }
-        if (payload.has("message")) {
-            return payload.path("message").asText("server rejected signal");
-        }
-        if (payload.isTextual()) {
-            return payload.asText();
-        }
-        return payload.toString();
     }
 
     private record PrivateMessage(String peerId, String message) {

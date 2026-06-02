@@ -2,7 +2,6 @@ package dropgoline.ui;
 
 import java.io.File;
 import java.util.Collections;
-import java.util.List;
 import java.util.function.Consumer;
 
 import javafx.animation.Interpolator;
