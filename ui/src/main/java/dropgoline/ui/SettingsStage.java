@@ -45,7 +45,7 @@ public class SettingsStage extends Stage {
         GridPane grid = new GridPane();
         grid.setVgap(10);
         grid.setHgap(10);
-        grid.addRow(0, new Label("同步伺服器 IP"), serverIpField);
+        grid.addRow(0, new Label("服務伺服器 IP"), serverIpField);
         grid.addRow(1, new Label("裝置名稱"), deviceNameField);
 
         Button saveBtn = new Button("儲存");
