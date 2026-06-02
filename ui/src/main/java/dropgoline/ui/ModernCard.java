@@ -37,6 +37,7 @@ public class ModernCard extends StackPane {
     private MenuItem downloadItem;
     private Runnable onDownloadRequest;
     private Runnable onHistoryRequest;
+    private boolean clearAfterDrag = false;
 
     public ModernCard(String name) {
         this.peername = name;
@@ -50,8 +51,8 @@ public class ModernCard extends StackPane {
         contentLabel.setWrapText(true);
 
         previewView = new ImageView();
-        previewView.setFitWidth(180);
-        previewView.setFitHeight(100);
+        previewView.fitWidthProperty().bind(widthProperty().subtract(24));
+        previewView.fitHeightProperty().bind(heightProperty().subtract(48));
         previewView.setPreserveRatio(true);
         previewView.setSmooth(true);
 
@@ -96,6 +97,13 @@ public class ModernCard extends StackPane {
             }
             Dragboard db = startDragAndDrop(TransferMode.COPY);
             db.setContent(content);
+            event.consume();
+        });
+
+        setOnDragDone(event -> {
+            if (clearAfterDrag && event.getTransferMode() != null) {
+                clearContent();
+            }
             event.consume();
         });
     }
@@ -191,6 +199,23 @@ public class ModernCard extends StackPane {
 
     public void setDownloaded(boolean downloaded) {
         checkMark.setVisible(downloaded);
+    }
+
+    public void setClearAfterDrag(boolean clearAfterDrag) {
+        this.clearAfterDrag = clearAfterDrag;
+    }
+
+    public void clearContent() {
+        contentLabel.setText("");
+        layout.setCenter(contentLabel);
+        previewView.setImage(null);
+        dragText = null;
+        dragFile = null;
+        setProgress(0);
+        setDownloaded(false);
+        if (downloadItem != null) {
+            downloadItem.setVisible(false);
+        }
     }
 
     public void setOnHistoryRequest(Runnable handler) {

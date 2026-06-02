@@ -2,9 +2,11 @@ package p2p.peer;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
@@ -28,7 +30,8 @@ public class PeerSignalClient implements AutoCloseable {
 
     public PeerSignalClient(String signalingUrl, String peerId) throws IOException {
         this.peerId = peerId;
-        URI uri = URI.create(signalingUrl + (signalingUrl.contains("?") ? "&" : "?") + "peerId=" + peerId);
+        String encodedPeerId = URLEncoder.encode(peerId, StandardCharsets.UTF_8);
+        URI uri = URI.create(signalingUrl + (signalingUrl.contains("?") ? "&" : "?") + "peerId=" + encodedPeerId);
         try {
             this.webSocket = HttpClient.newHttpClient()
                     .newWebSocketBuilder()

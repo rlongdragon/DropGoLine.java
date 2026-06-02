@@ -113,7 +113,8 @@ public class RealP2PManager implements P2PManager {
                     case FILE_SAVED -> {
                         Path file = event.file();
                         if (file != null && listener != null) {
-                            HistoryManager.getInstance().addHistory(event.from(), file.toString(), true, "FILE");
+                            HistoryManager.getInstance().addHistory(event.from(), file.toString(), true,
+                                    isImageFileName(file.getFileName().toString()) ? "IMAGE" : "FILE");
                             listener.onTransferComplete(event.from(), file.toFile());
                         }
                     }
@@ -196,7 +197,6 @@ public class RealP2PManager implements P2PManager {
         // 使用原本的 API 傳送檔案
         try {
             group.send(null,file.toPath(), peerName);
-            group.send("Hello Jerry", null, "jerry");
             System.out.println("已呼叫 API 傳送檔案給: " + peerName);
         } catch (Exception ex) {
             System.err.println("傳送檔案時發生異常: " + ex.getMessage());
@@ -243,5 +243,18 @@ public class RealP2PManager implements P2PManager {
         } catch (Exception ex) {
             ex.printStackTrace();
         }
+    }
+
+    private boolean isImageFileName(String fileName) {
+        if (fileName == null) {
+            return false;
+        }
+        String name = fileName.toLowerCase();
+        return name.endsWith(".png")
+                || name.endsWith(".jpg")
+                || name.endsWith(".jpeg")
+                || name.endsWith(".gif")
+                || name.endsWith(".bmp")
+                || name.endsWith(".webp");
     }
 }
