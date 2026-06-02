@@ -20,6 +20,7 @@
         <java.version>17</java.version>
         <ice4j.version>3.0-24-g34c2ce5</ice4j.version>
         <kwik.version>0.9</kwik.version>
+        <bouncycastle.version>1.78.1</bouncycastle.version>
     </properties>
 
     <dependencies>
@@ -44,6 +45,16 @@
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-transport</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>${bouncycastle.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>${bouncycastle.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
