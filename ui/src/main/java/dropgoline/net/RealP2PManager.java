@@ -8,26 +8,36 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import dropgoline.historyservice.HistoryManager;
 import p2p.api.P2p;
 import p2p.api.P2pSessionInstance;
+import p2p.quic.QuicChannel;
 
 public class RealP2PManager implements P2PManager {
 
+    private final Map<String, QuicChannel> peerChannels = new ConcurrentHashMap<>();
     private final String localName;
     private final String signalingUrl;
     private final Path downloadDir;
+    private final Map<String, String> latestOfferByPeer = new ConcurrentHashMap<>();
+    private final Set<String> reportedPeers = ConcurrentHashMap.newKeySet();
 
     private P2p p2p;
     private P2pSessionInstance group;
     private P2PListener listener;
 
-    private final Map<String, String> latestOfferByPeer = new ConcurrentHashMap<>();
-    private final Set<String> reportedPeers = ConcurrentHashMap.newKeySet();
-
     public RealP2PManager(String localName, String signalingUrl, Path downloadDir) {
         this.localName = localName;
         this.signalingUrl = signalingUrl;
         this.downloadDir = downloadDir;
+    }
+
+    public QuicChannel getChannel(String peerName) {
+        return peerChannels.get(peerName);
+    }
+
+    public void registerChannel(String peerName, QuicChannel channel) {
+        peerChannels.put(peerName, channel);
     }
 
     @Override
@@ -82,6 +92,7 @@ public class RealP2PManager implements P2PManager {
                 switch (event.type()) {
                     case MESSAGE -> {
                         System.out.println("[DropGoLine][P2PManager] message received from=" + event.from());
+                        HistoryManager.getInstance().addHistory(event.from(), event.message(), true, "TEXT");
                         if (listener != null) {
                             listener.onMessageReceived(event.from(), event.message());
                         }
@@ -100,6 +111,9 @@ public class RealP2PManager implements P2PManager {
                         System.out.println("[DropGoLine][P2PManager] file saved from=" + event.from()
                                 + ", offerId=" + event.offerId() + ", file=" + file
                                 + ", direct=" + event.direct());
+                        if (file != null) {
+                            HistoryManager.getInstance().addHistory(event.from(), file.toString(), true, "FILE");
+                        }
                         if (file != null && listener != null) {
                             listener.onTransferComplete(event.from(), file.toFile());
                         }

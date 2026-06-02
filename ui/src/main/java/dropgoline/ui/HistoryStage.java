@@ -46,8 +46,8 @@ public class HistoryStage extends Stage{
     }
 
     public void addItem(HistoryItem item){
-        ModernCard card = new ModernCard(item.timestamp());
-        card.setText(item.content());
+        ModernCard card = new ModernCard(item.getTimestamp());
+        card.setText(item.getContent());
         card.setPrefHeight(70);
         card.setMinHeight(70);
         card.setMaxWidth(Double.MAX_VALUE);

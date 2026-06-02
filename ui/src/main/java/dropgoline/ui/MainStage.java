@@ -6,10 +6,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import dropgoline.historyservice.HistoryManager;
+import dropgoline.model.HistoryItem;
 import dropgoline.net.P2PListener;
 import dropgoline.net.P2PManager;
 import dropgoline.settings.AppSettings;
-
 import javafx.animation.Interpolator;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
@@ -18,10 +19,8 @@ import javafx.application.Platform;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.geometry.Insets;
-import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
@@ -36,11 +35,13 @@ import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
-import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import javafx.util.Duration;
+import p2p.transfer.ChecksumService;
+import p2p.transfer.FileTransferProtocol;
+import p2p.transfer.FileTransferService;
 
 public class MainStage extends Stage implements P2PListener {
     private final P2PManager p2p;
@@ -48,7 +49,11 @@ public class MainStage extends Stage implements P2PListener {
     private final Map<String, ModernCard> cards = new HashMap<>();
     private final Map<String, ProgressStage> activeProgress = new HashMap<>();
     private final Map<String, Timeline> progressSims = new HashMap<>();
+    private final FileTransferService transferService;
+    private final Map<String, File> pendingFiles = new HashMap<>();
+    private final Map<String, File> receivedFilesById = new HashMap<>();
 
+    private File lastReceivedFile;
     private double dragOffsetX;
     private double dragOffsetY;
     private boolean trayInstalled = false;
@@ -56,8 +61,11 @@ public class MainStage extends Stage implements P2PListener {
     public MainStage(P2PManager p2p) {
         this.p2p = p2p;
 
-        initStyle(StageStyle.TRANSPARENT);
+        ChecksumService checksumService = new ChecksumService();
+        FileTransferProtocol protocol = new FileTransferProtocol(checksumService);
+        this.transferService = new FileTransferService(protocol);
 
+        initStyle(StageStyle.TRANSPARENT);
         setTitle("DropGoLine");
         setAlwaysOnTop(true);
         setWidth(500);
@@ -96,7 +104,6 @@ public class MainStage extends Stage implements P2PListener {
         setScene(scene);
 
         ResizeHelper.install(this);
-
         setOnShown(e -> WindowsAcrylic.apply(this));
 
         p2p.setListener(this);
@@ -106,7 +113,11 @@ public class MainStage extends Stage implements P2PListener {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Button closeBtn = new Button("\u2715");
+        Button minBtn = new Button("-");
+        minBtn.getStyleClass().add("window-button");
+        minBtn.setOnAction(e -> setIconified(true));
+
+        Button closeBtn = new Button("x");
         closeBtn.getStyleClass().addAll("window-button", "close");
         closeBtn.setOnAction(e -> {
             if (trayInstalled) {
@@ -116,11 +127,7 @@ public class MainStage extends Stage implements P2PListener {
             }
         });
 
-        Button minBtn = new Button("\u2013");
-        minBtn.getStyleClass().add("window-button");
-        minBtn.setOnAction(e -> setIconified(true));
-
-        HBox bar = new HBox(spacer, minBtn, closeBtn);
+        HBox bar = new HBox(buildStatusBar(), spacer, minBtn, closeBtn);
         bar.getStyleClass().add("top-bar");
         bar.setMinHeight(28);
         bar.setPickOnBounds(true);
@@ -144,9 +151,7 @@ public class MainStage extends Stage implements P2PListener {
         } catch (Exception ignored) {
         }
 
-        MenuBar menuBar = buildMenuBar();
-
-        HBox bar = new HBox(8, iconView, menuBar);
+        HBox bar = new HBox(8, iconView, buildMenuBar());
         bar.getStyleClass().add("status-bar");
         bar.setPadding(new Insets(2, 8, 2, 6));
         bar.setMinHeight(30);
@@ -158,26 +163,25 @@ public class MainStage extends Stage implements P2PListener {
             if (iconStream != null) {
                 getIcons().add(new Image(iconStream));
             } else {
-                System.out.println("[Icon] 找不到 /icons/app.png，使用預設圖示");
+                System.out.println("[Icon] /icons/app.png not found");
             }
         } catch (Exception ex) {
-            System.out.println("[Icon] 載入失敗：" + ex.getMessage());
+            System.out.println("[Icon] failed to load: " + ex.getMessage());
         }
     }
 
     private MenuBar buildMenuBar() {
-        MenuItem connectItem = new MenuItem("建立連線");
+        MenuItem connectItem = new MenuItem("Connect");
         connectItem.setOnAction(e -> handleConnect());
 
-        MenuItem disconnectItem = new MenuItem("斷開連線");
+        MenuItem disconnectItem = new MenuItem("Disconnect");
         disconnectItem.setOnAction(e -> p2p.disconnect());
 
-        MenuItem settingsItem = new MenuItem("其他設定");
+        MenuItem settingsItem = new MenuItem("Settings");
         settingsItem.setOnAction(e -> new SettingsStage().show());
 
-        Menu optionsMenu = new Menu("選項");
+        Menu optionsMenu = new Menu("Options");
         optionsMenu.getItems().addAll(connectItem, disconnectItem, new SeparatorMenuItem(), settingsItem);
-
         return new MenuBar(optionsMenu);
     }
 
@@ -188,8 +192,9 @@ public class MainStage extends Stage implements P2PListener {
     }
 
     private void openHistoryFor(String peerName) {
-        HistoryStage history = new HistoryStage(peerName, List.of());
-        history.show();
+        List<HistoryItem> items = HistoryManager.getInstance().getHistory(peerName);
+        System.out.println("[DEBUG] history items for " + peerName + ": " + items.size());
+        new HistoryStage(peerName, items).show();
     }
 
     private void startDownload(String peerName) {
@@ -198,7 +203,8 @@ public class MainStage extends Stage implements P2PListener {
         if (activeProgress.containsKey(peerName)) {
             return;
         }
-        ProgressStage progressStage = new ProgressStage(peerName + " 的檔案");
+
+        ProgressStage progressStage = new ProgressStage(peerName + " download");
         activeProgress.put(peerName, progressStage);
         progressStage.show();
         progressStage.updateProgress(0);
@@ -206,9 +212,8 @@ public class MainStage extends Stage implements P2PListener {
         DoubleProperty p = new SimpleDoubleProperty(0);
         p.addListener((obs, ov, nv) -> progressStage.updateProgress(nv.doubleValue()));
         Timeline sim = new Timeline(
-            new KeyFrame(Duration.ZERO, new KeyValue(p, 0)),
-            new KeyFrame(Duration.seconds(10), new KeyValue(p, 0.9, Interpolator.EASE_IN))
-        );
+                new KeyFrame(Duration.ZERO, new KeyValue(p, 0)),
+                new KeyFrame(Duration.seconds(10), new KeyValue(p, 0.9, Interpolator.EASE_IN)));
         progressSims.put(peerName, sim);
         sim.play();
 
@@ -220,7 +225,7 @@ public class MainStage extends Stage implements P2PListener {
         ClipboardContent content = new ClipboardContent();
         content.putString(text);
         clipboard.setContent(content);
-        System.out.println("[Clipboard] 已寫入：" + text);
+        System.out.println("[Clipboard] copied: " + text);
     }
 
     @Override
@@ -245,12 +250,44 @@ public class MainStage extends Stage implements P2PListener {
     public void onMessageReceived(String peerName, String text) {
         Platform.runLater(() -> {
             ModernCard card = cards.get(peerName);
-            if (card != null) {
-                card.setText(text);
+            if (card == null) {
+                return;
             }
 
-            if (AppSettings.current().isAutoClipboardCopy()) {
-                copyToClipboard(text);
+            if (text.startsWith("OFFER_ID:")) {
+                String[] parts = text.split(":", 3);
+                if (parts.length >= 3) {
+                    String fileId = parts[1];
+                    String fileName = parts[2];
+                    card.setPendingFile(fileName, 0);
+                    card.setPendingFile(fileId);
+                    card.setOnDownloadRequest(() -> p2p.sendText(peerName, "REQUEST_FILE:" + fileId));
+                }
+            } else if (text.startsWith("REQUEST_FILE:")) {
+                String fileId = text.substring("REQUEST_FILE:".length());
+                File file = pendingFiles.get(fileId);
+                if (file != null) {
+                    p2p.sendFile(peerName, file);
+                    p2p.sendText(peerName, "FILE_ARRIVED:" + fileId + "|" + file.getName());
+                }
+            } else if (text.startsWith("FILE_ARRIVED:")) {
+                String content = text.substring("FILE_ARRIVED:".length());
+                String[] parts = content.split("\\|", 2);
+                String fileName = parts.length == 2 ? parts[1] : content;
+                File receivedFile = lastReceivedFile;
+                if (receivedFile != null) {
+                    card.setFile(receivedFile);
+                    card.setDownloaded(true);
+                    card.setText("Received file: " + fileName);
+                } else {
+                    card.setText("File received: " + fileName);
+                }
+            } else {
+                System.out.println("[DropGoLine][UI] message from=" + peerName + ": " + text);
+                card.setText(text);
+                if (AppSettings.current().isAutoClipboardCopy()) {
+                    copyToClipboard(text);
+                }
             }
         });
     }
@@ -277,6 +314,7 @@ public class MainStage extends Stage implements P2PListener {
 
     @Override
     public void onTransferComplete(String peerName, File file) {
+        this.lastReceivedFile = file;
         Platform.runLater(() -> {
             Timeline sim = progressSims.remove(peerName);
             if (sim != null) {
@@ -293,7 +331,10 @@ public class MainStage extends Stage implements P2PListener {
             if (card != null) {
                 card.setFile(file);
                 card.setDownloaded(true);
+                receivedFilesById.put(file.getName(), file);
             }
+
+            System.out.println("Transfer complete: " + file.getName());
         });
     }
 
@@ -301,11 +342,27 @@ public class MainStage extends Stage implements P2PListener {
         if (cards.containsKey(name)) {
             return;
         }
+
         ModernCard card = new ModernCard(name);
-        card.setText("尚無訊息");
+        card.setText("Ready");
         card.setOnHistoryRequest(() -> openHistoryFor(name));
         card.setOnDownloadRequest(() -> startDownload(name));
+        card.setOnTextDropped(text -> {
+            p2p.sendText(name, text);
+            card.setText("Sent text");
+            new Thread(() -> {
+                try {
+                    Thread.sleep(500);
+                    Platform.runLater(() -> card.setText("Ready"));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }, "text-drop-reset").start();
+        });
         card.setOnFileDropped(file -> {
+            String fileId = java.util.UUID.randomUUID().toString();
+            pendingFiles.put(fileId, file);
+            p2p.sendText(name, "OFFER_ID:" + fileId + ":" + file.getName());
             System.out.println("[DropGoLine][UI] Calling p2p.sendFile peer=" + name
                     + ", file=" + file.getAbsolutePath() + ", size=" + file.length());
             p2p.sendFile(name, file);
@@ -313,11 +370,6 @@ public class MainStage extends Stage implements P2PListener {
 
         cards.put(name, card);
         cardPane.getChildren().add(card);
-    }
-
-    private static String stripSuffix(String peerId){
-        int i = peerId.lastIndexOf("#");
-        return (i > 0) ? peerId.substring(0, i) : peerId;
     }
 
     private void removePeer(String name) {

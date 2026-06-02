@@ -1,6 +1,7 @@
 package dropgoline.ui;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -35,11 +36,13 @@ public class ModernCard extends StackPane {
 
     private String dragText = null;
     private File dragFile = null;
+    private String pendingOfferId;
 
     private MenuItem downloadItem;
     private Runnable onDownloadRequest;
     private Runnable onHistoryRequest;
     private Consumer<File> onFileDropped;
+    private Consumer<String> onTextDropped;
     private boolean hasPendingDownload = false;
 
     public ModernCard(String name) {
@@ -71,7 +74,7 @@ public class ModernCard extends StackPane {
         layout.setCenter(contentLabel);
         layout.setBottom(transferBar);
 
-        checkMark = new Label("✓");
+        checkMark = new Label("OK");
         checkMark.getStyleClass().add("card-check");
         checkMark.setVisible(false);
         StackPane.setAlignment(checkMark, Pos.BOTTOM_RIGHT);
@@ -91,15 +94,8 @@ public class ModernCard extends StackPane {
     private void setupDragReceiving() {
         setOnDragOver(event -> {
             Dragboard db = event.getDragboard();
-            if (db.hasFiles() || db.hasString()) {
-                event.acceptTransferModes(TransferMode.COPY);
-            }
-            event.consume();
-        });
-
-        setOnDragEntered(event -> {
-            Dragboard db = event.getDragboard();
-            if (db.hasFiles() || db.hasString()) {
+            if (event.getGestureSource() != this && (db.hasFiles() || db.hasString())) {
+                event.acceptTransferModes(TransferMode.COPY_OR_MOVE);
                 getStyleClass().add("drag-over");
             }
             event.consume();
@@ -127,9 +123,14 @@ public class ModernCard extends StackPane {
                 }
                 success = true;
             } else if (db.hasString()) {
-                setText(db.getString());
+                String text = db.getString();
+                setText(text);
+                if (onTextDropped != null) {
+                    onTextDropped.accept(text);
+                }
                 success = true;
             }
+
             event.setDropCompleted(success);
             getStyleClass().remove("drag-over");
             event.consume();
@@ -139,8 +140,8 @@ public class ModernCard extends StackPane {
     private void setupDragSource() {
         setOnDragDetected(event -> {
             ClipboardContent content = new ClipboardContent();
-            if (dragFile != null) {
-                content.putFiles(List.of(dragFile));
+            if (dragFile != null && dragFile.exists()) {
+                content.putFiles(Collections.singletonList(dragFile));
             } else if (dragText != null && !dragText.isEmpty()) {
                 content.putString(dragText);
             } else {
@@ -151,12 +152,20 @@ public class ModernCard extends StackPane {
             db.setContent(content);
             event.consume();
         });
+
+        setOnDragDone(event -> {
+            if (event.getTransferMode() == TransferMode.COPY && dragText != null) {
+                setText("Ready");
+                dragText = null;
+            }
+            event.consume();
+        });
     }
 
     private void setupContextMenu() {
         ContextMenu menu = new ContextMenu();
 
-        downloadItem = new MenuItem("下載");
+        downloadItem = new MenuItem("Download");
         downloadItem.setVisible(false);
         downloadItem.setOnAction(e -> {
             if (onDownloadRequest != null) {
@@ -164,7 +173,7 @@ public class ModernCard extends StackPane {
             }
         });
 
-        MenuItem historyItem = new MenuItem("歷史紀錄");
+        MenuItem historyItem = new MenuItem("History");
         historyItem.setOnAction(e -> {
             if (onHistoryRequest != null) {
                 onHistoryRequest.run();
@@ -196,12 +205,12 @@ public class ModernCard extends StackPane {
         });
     }
 
-    private void setupHoverAnimation(){
+    private void setupHoverAnimation() {
         setOnMouseEntered(e -> animateScale(1.03));
         setOnMouseExited(e -> animateScale(1.0));
     }
 
-    private void animateScale(double target){
+    private void animateScale(double target) {
         Timeline t = new Timeline(
             new KeyFrame(Duration.millis(150),
                 new KeyValue(scaleXProperty(), target, Interpolator.EASE_OUT),
@@ -211,8 +220,16 @@ public class ModernCard extends StackPane {
         t.play();
     }
 
-    public void setPendingFile(String fileName, long fileSize){
-        contentLabel.setText("📥 " + fileName + "\n" + formatSize(fileSize));
+    public void setPendingFile(String offerId) {
+        this.pendingOfferId = offerId;
+    }
+
+    public String getPendingOfferId() {
+        return pendingOfferId;
+    }
+
+    public void setPendingFile(String fileName, long fileSize) {
+        contentLabel.setText("Incoming file: " + fileName + "\n" + formatSize(fileSize));
         layout.setCenter(contentLabel);
         dragText = null;
         dragFile = null;
@@ -226,18 +243,18 @@ public class ModernCard extends StackPane {
         dragText = text;
         dragFile = null;
         hasPendingDownload = false;
-        if (downloadItem != null){
+        if (downloadItem != null) {
             downloadItem.setVisible(false);
         }
     }
 
     public void setFile(File file) {
-        contentLabel.setText("📄 " + file.getName());
+        contentLabel.setText("File: " + file.getName());
         layout.setCenter(contentLabel);
         dragFile = file;
         dragText = null;
         hasPendingDownload = false;
-        if (downloadItem != null){
+        if (downloadItem != null) {
             downloadItem.setVisible(false);
         }
     }
@@ -277,6 +294,10 @@ public class ModernCard extends StackPane {
 
     public void setOnFileDropped(Consumer<File> handler) {
         this.onFileDropped = handler;
+    }
+
+    public void setOnTextDropped(Consumer<String> handler) {
+        this.onTextDropped = handler;
     }
 
     public String getPeerName() {
