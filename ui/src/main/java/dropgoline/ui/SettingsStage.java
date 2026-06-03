@@ -20,8 +20,15 @@ public class SettingsStage extends Stage {
     private final CheckBox autoSyncCheck;
     private final CheckBox autoReconnectCheck;
     private final CheckBox allowDiscoveryCheck;
+    private final Runnable onSaved;
 
-    public SettingsStage(){
+    public SettingsStage() {
+        this(null);
+    }
+
+    public SettingsStage(Runnable onSaved) {
+        this.onSaved = onSaved;
+
         setTitle("其他設定");
         setResizable(false);
 
@@ -57,28 +64,30 @@ public class SettingsStage extends Stage {
                 autoSyncCheck,
                 autoReconnectCheck,
                 allowDiscoveryCheck,
-                saveBtn
-            );
-            root.setPadding(new Insets(20));
+                saveBtn);
+        root.setPadding(new Insets(20));
 
         Scene scene = new Scene(root);
         scene.getStylesheets().add(
-            getClass().getResource("/styles/app.css").toExternalForm()
-        );
+                getClass().getResource("/styles/app.css").toExternalForm());
         setScene(scene);
     }
 
-    private void save(){
+    private void save() {
         AppSettings settings = AppSettings.current();
-        settings.setServerIP(serverIpField.getText());
-        settings.setDeviceName(deviceNameField.getText());
+        settings.setServerIP(serverIpField.getText().trim());
+        settings.setDeviceName(deviceNameField.getText().trim());
         settings.setAutoClipboardCopy(autoCopyCheck.isSelected());
         settings.setAutoClipboardSync(autoSyncCheck.isSelected());
         settings.setEnableAutoReconnect(autoReconnectCheck.isSelected());
         settings.setAllowDiscovery(allowDiscoveryCheck.isSelected());
         settings.save();
 
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "設定已儲存！");
+        if (onSaved != null) {
+            onSaved.run();
+        }
+
+        Alert alert = new Alert(Alert.AlertType.INFORMATION, "設定已儲存，正在使用最新設定重新連線。");
         alert.setHeaderText(null);
         alert.showAndWait();
         close();

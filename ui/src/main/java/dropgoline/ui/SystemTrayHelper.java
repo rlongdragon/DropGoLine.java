@@ -31,15 +31,17 @@ public final class SystemTrayHelper {
     private static volatile String currentId = "-";
     private static Runnable onConnect;
     private static Runnable onDisconnect;
+    private static Runnable onSettings;
 
     public static boolean install(Stage stage, String iconResourcePath, String tooltip,
-                                  Runnable connectAction, Runnable disconnectAction) {
+                                  Runnable connectAction, Runnable disconnectAction, Runnable settingsAction) {
         if (!SystemTray.isSupported()) {
             System.out.println("[Tray] 此系統不支援系統匣");
             return false;
         }
         onConnect = connectAction;
         onDisconnect = disconnectAction;
+        onSettings = settingsAction;
         Platform.setImplicitExit(false);
 
         try {
@@ -97,7 +99,7 @@ public final class SystemTrayHelper {
             sep(),
             row("建立連線", () -> { if (onConnect != null) onConnect.run(); }),
             row("斷開連線", () -> { if (onDisconnect != null) onDisconnect.run(); }),
-            row("其他設定", () -> new SettingsStage().show()),
+            row("其他設定", () -> { if (onSettings != null) onSettings.run(); }),
             sep(),
             row("結束", () -> System.exit(0))
         );

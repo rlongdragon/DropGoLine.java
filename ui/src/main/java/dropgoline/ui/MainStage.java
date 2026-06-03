@@ -14,6 +14,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
 import dropgoline.historyservice.HistoryManager;
 import dropgoline.net.P2PListener;
@@ -57,7 +58,8 @@ public class MainStage extends Stage implements P2PListener {
     private static final String GROUP_HISTORY_KEY = "__GROUP__";
     private static final String GROUP_HISTORY_TITLE = "群聊";
 
-    private final P2PManager p2p;
+    private P2PManager p2p;
+    private final Supplier<P2PManager> p2pFactory;
     private final FlowPane cardPane;
     private final Map<String, ModernCard> cards = new HashMap<>();
     private final Map<String, ProgressStage> activeProgress = new HashMap<>();
@@ -67,8 +69,9 @@ public class MainStage extends Stage implements P2PListener {
     private double dragOffsetY;
     private boolean trayInstalled = false;
 
-    public MainStage(P2PManager p2p) {
+    public MainStage(P2PManager p2p, Supplier<P2PManager> p2pFactory) {
         this.p2p = p2p;
+        this.p2pFactory = p2pFactory;
 
         initStyle(StageStyle.TRANSPARENT);
 
@@ -80,7 +83,7 @@ public class MainStage extends Stage implements P2PListener {
         loadIcon();
 
         trayInstalled = SystemTrayHelper.install(this, "/icons/app.png", "DropGoLine", this::handleConnect,
-                p2p::disconnect);
+                () -> this.p2p.disconnect(), this::openSettings);
 
         HBox topBar = buildTopBar();
 
@@ -189,7 +192,7 @@ public class MainStage extends Stage implements P2PListener {
         disconnectItem.setOnAction(e -> p2p.disconnect());
 
         MenuItem settingsItem = new MenuItem("其他設定");
-        settingsItem.setOnAction(e -> new SettingsStage().show());
+        settingsItem.setOnAction(e -> openSettings());
 
         Menu optionsMenu = new Menu("選項");
         optionsMenu.getItems().addAll(connectItem, disconnectItem, new SeparatorMenuItem(), settingsItem);
@@ -201,6 +204,43 @@ public class MainStage extends Stage implements P2PListener {
         ConnectionStage conn = new ConnectionStage();
         conn.setOnConnect(code -> p2p.connect(code));
         conn.show();
+    }
+
+    private void openSettings() {
+        new SettingsStage(this::reconnectWithLatestSettings).show();
+    }
+
+    private void reconnectWithLatestSettings() {
+        p2p.disconnect();
+        clearPeerUi();
+
+        p2p = p2pFactory.get();
+        p2p.setListener(this);
+
+        AppSettings settings = AppSettings.current();
+        String lastCode = settings.getLastGroupCode();
+        if (settings.isEnableAutoReconnect() && lastCode != null && !lastCode.isBlank()) {
+            p2p.connect(lastCode);
+        } else {
+            p2p.connect("");
+        }
+    }
+
+    private void clearPeerUi() {
+        for (Timeline timeline : progressSims.values()) {
+            timeline.stop();
+        }
+        progressSims.clear();
+
+        for (ProgressStage progressStage : activeProgress.values()) {
+            progressStage.close();
+        }
+        activeProgress.clear();
+
+        for (ModernCard card : cards.values()) {
+            cardPane.getChildren().remove(card);
+        }
+        cards.clear();
     }
 
     private void openHistoryFor(String peerName) {
