@@ -101,6 +101,7 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
         String peerId = peerRegistry.peerId(session).orElse(signal.from());
         String groupId;
         try {
+            notifyPeerLeft(groupRegistry.removePeer(peerId));
             groupId = groupRegistry.create(requestedGroupId, peerId);
         } catch (IllegalArgumentException e) {
             sendError(session, e.getMessage());
@@ -119,6 +120,7 @@ public class SignalingWebSocketHandler extends TextWebSocketHandler {
         String joinerPeerId = peerRegistry.peerId(session).orElse(signal.from());
         List<String> existingPeers;
         try {
+            notifyPeerLeft(groupRegistry.removePeer(joinerPeerId));
             existingPeers = groupRegistry.join(groupId, joinerPeerId);
         } catch (IllegalArgumentException e) {
             sendError(session, e.getMessage());

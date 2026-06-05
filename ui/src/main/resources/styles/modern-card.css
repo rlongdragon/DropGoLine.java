@@ -59,3 +59,18 @@
     -fx-font-weight: bold;
     -fx-alignment: center;
 }
+
+.card-file-content{
+    -fx-padding: 8px 10px;
+}
+
+.card-file-name{
+    -fx-text-fill: white;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+}
+
+.card-file-detail{
+    -fx-text-fill: rgba(255, 255, 255, 0.68);
+    -fx-font-size: 12px;
+}

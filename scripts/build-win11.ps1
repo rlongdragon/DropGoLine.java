@@ -30,6 +30,38 @@ function Test-Command {
     }
 }
 
+function New-AppImageZip {
+    param(
+        [string]$SourceDir,
+        [string]$DestinationPath
+    )
+
+    $sourcePath = (Resolve-Path $SourceDir).Path
+    $destinationFullPath = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $DestinationPath))
+    $sourceParent = Split-Path -Parent $sourcePath
+    $sourceName = Split-Path -Leaf $sourcePath
+
+    if (Test-Path -LiteralPath $destinationFullPath) {
+        Remove-Item -LiteralPath $destinationFullPath -Force
+    }
+
+    $tar = Get-Command "tar" -ErrorAction SilentlyContinue
+    if ($tar) {
+        Push-Location $sourceParent
+        try {
+            & $tar.Source -a -cf $destinationFullPath $sourceName
+            if ($LASTEXITCODE -ne 0) {
+                throw "tar failed to create archive '$destinationFullPath' (exit code $LASTEXITCODE)."
+            }
+        } finally {
+            Pop-Location
+        }
+        return
+    }
+
+    Compress-Archive -LiteralPath $sourcePath -DestinationPath $destinationFullPath -Force
+}
+
 $repoRoot = Resolve-RepoRoot
 $p2pDir = Join-Path $repoRoot "p2p-sample"
 $uiDir = Join-Path $repoRoot "ui"
@@ -120,7 +152,7 @@ Invoke-Step "Create Windows app image with bundled runtime" {
         Set-Content -LiteralPath $debugCmdPath -Value $debugCmd -Encoding ASCII
 
         $zipPath = Join-Path "target" "DropGoLine-win11-runtime-$Version.zip"
-        Compress-Archive -LiteralPath $appImageDir -DestinationPath $zipPath -Force
+        New-AppImageZip -SourceDir $appImageDir -DestinationPath $zipPath
 
         Write-Host ""
         Write-Host "App image: $((Resolve-Path $appImageDir).Path)" -ForegroundColor Green

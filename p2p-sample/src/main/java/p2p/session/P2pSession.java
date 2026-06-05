@@ -16,6 +16,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -35,6 +37,7 @@ public class P2pSession implements AutoCloseable {
     private final AtomicBoolean closedOnce = new AtomicBoolean();
     private final Runnable onClose;
     private final Listener listener;
+    private final ExecutorService transferExecutor = Executors.newSingleThreadExecutor();
     private final Map<String, LocalOffer> localOffers = new ConcurrentHashMap<>();
     private final Map<String, RemoteOffer> remoteOffers = new ConcurrentHashMap<>();
     private volatile boolean running = true;
@@ -154,6 +157,7 @@ public class P2pSession implements AutoCloseable {
         running = false;
         closeQuietly(input);
         closeQuietly(output);
+        transferExecutor.shutdownNow();
         closed.countDown();
         onClose.run();
     }
@@ -165,7 +169,7 @@ public class P2pSession implements AutoCloseable {
                 switch (type) {
                     case SessionProtocol.TYPE_TEXT -> listener.onText(remotePeerId, input.readUTF());
                     case SessionProtocol.TYPE_FILE_OFFER -> receiveFileOffer();
-                    case SessionProtocol.TYPE_FILE_REQUEST -> sendRequestedFile(input.readUTF(), input.readLong());
+                    case SessionProtocol.TYPE_FILE_REQUEST -> submitRequestedFile(input.readUTF(), input.readLong());
                     case SessionProtocol.TYPE_FILE_START -> receiveFile();
                     case SessionProtocol.TYPE_NOTICE -> listener.onNotice(remotePeerId, input.readUTF());
                     case SessionProtocol.TYPE_KEEPALIVE -> {
@@ -237,6 +241,20 @@ public class P2pSession implements AutoCloseable {
         sendFile(id, offer, offset);
     }
 
+    private void submitRequestedFile(String id, long offset) {
+        transferExecutor.submit(() -> {
+            try {
+                sendRequestedFile(id, offset);
+            } catch (Exception e) {
+                if (running) {
+                    listener.onError(remotePeerId, e instanceof IOException ioException
+                            ? ioException
+                            : new IOException("direct file send failed: " + e.getMessage(), e));
+                }
+            }
+        });
+    }
+
     private void sendFile(String id, LocalOffer offer, long offset) throws IOException {
         if (Files.size(offer.path()) != offer.size()
                 || !FileChecksums.sha256(offer.path()).equalsIgnoreCase(offer.checksum())) {
@@ -270,6 +288,8 @@ public class P2pSession implements AutoCloseable {
                     output.writeInt(read);
                     output.write(buffer, 0, read);
                     sent += read;
+                    output.flush();
+                    listener.onFileProgress(remotePeerId, id, offer.fileName(), offer.size(), offset + sent);
                     System.out.println("[DropGoLine][DirectSession] sendFile chunk id=" + id
                             + ", chunk=" + chunkIndex + ", bytes=" + read
                             + ", sent=" + (offset + sent) + "/" + offer.size());
@@ -338,6 +358,7 @@ public class P2pSession implements AutoCloseable {
                 input.readFully(chunk);
                 fileOutput.write(chunk);
                 received += length;
+                listener.onFileProgress(remotePeerId, id, fileName, size, received);
                 System.out.println("[DropGoLine][DirectSession] receiveFile chunk id=" + id
                         + ", chunk=" + chunkIndex + ", bytes=" + length
                         + ", received=" + received + "/" + size);
@@ -453,6 +474,9 @@ public class P2pSession implements AutoCloseable {
         }
 
         default void onFileSaved(String fromPeerId, String id, Path target) {
+        }
+
+        default void onFileProgress(String fromPeerId, String id, String fileName, long size, long bytesReceived) {
         }
 
         default void onNotice(String fromPeerId, String message) {

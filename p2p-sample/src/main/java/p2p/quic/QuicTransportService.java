@@ -108,7 +108,7 @@ public class QuicTransportService {
         private void handleStream(QuicStream quicStream) {
             try {
                 handler.handle(quicStream.getInputStream(), quicStream.getOutputStream());
-            } catch (IOException e) {
+            } catch (Exception e) {
                 quicStream.resetStream(1);
             }
         }

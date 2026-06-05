@@ -10,9 +10,11 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import dropgoline.historyservice.HistoryManager;
@@ -20,13 +22,7 @@ import dropgoline.net.P2PListener;
 import dropgoline.net.P2PManager;
 import dropgoline.settings.AppSettings;
 import dropgoline.util.PeerIds;
-import javafx.animation.Interpolator;
-import javafx.animation.KeyFrame;
-import javafx.animation.KeyValue;
-import javafx.animation.Timeline;
 import javafx.application.Platform;
-import javafx.beans.property.DoubleProperty;
-import javafx.beans.property.SimpleDoubleProperty;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -42,7 +38,6 @@ import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
-import javafx.util.Duration;
 
 public class MainStage extends Stage implements P2PListener {
     private static final long MAX_REMOTE_IMAGE_BYTES = 20L * 1024 * 1024;
@@ -50,8 +45,7 @@ public class MainStage extends Stage implements P2PListener {
     private final P2PManager p2p;
     private final FlowPane cardPane;
     private final Map<String, ModernCard> cards = new HashMap<>();
-    private final Map<String, ProgressStage> activeProgress = new HashMap<>();
-    private final Map<String, Timeline> progressSims = new HashMap<>();
+    private final Set<String> activeDownloads = new HashSet<>();
 
     private double dragOffsetX;
     private double dragOffsetY;
@@ -164,23 +158,17 @@ public class MainStage extends Stage implements P2PListener {
 
     private void startDownload(String peerName) {
         System.out.println("[DropGoLine][UI] startDownload peer=" + peerName
-                + ", alreadyActive=" + activeProgress.containsKey(peerName));
-        if (activeProgress.containsKey(peerName)) {
+                + ", alreadyActive=" + activeDownloads.contains(peerName));
+        if (activeDownloads.contains(peerName)) {
             return;
         }
 
-        ProgressStage progressStage = new ProgressStage(peerName + " download");
-        activeProgress.put(peerName, progressStage);
-        progressStage.show();
-        progressStage.updateProgress(0);
-
-        DoubleProperty p = new SimpleDoubleProperty(0);
-        p.addListener((obs, ov, nv) -> progressStage.updateProgress(nv.doubleValue()));
-        Timeline sim = new Timeline(
-                new KeyFrame(Duration.ZERO, new KeyValue(p, 0)),
-                new KeyFrame(Duration.seconds(10), new KeyValue(p, 0.9, Interpolator.EASE_IN)));
-        progressSims.put(peerName, sim);
-        sim.play();
+        ModernCard card = cards.get(peerName);
+        if (card != null) {
+            card.setDownloaded(false);
+            card.setProgress(0);
+        }
+        activeDownloads.add(peerName);
 
         p2p.requestDownload(peerName);
     }
@@ -348,6 +336,9 @@ public class MainStage extends Stage implements P2PListener {
 
     @Override
     public void onIdChanged(String id) {
+        System.out.println("[DropGoLine][UI] onIdChanged id=" + id
+                + ", fxThread=" + Platform.isFxApplicationThread()
+                + ", thread=" + Thread.currentThread().getName());
         SystemTrayHelper.updateId(id);
         AppSettings s = AppSettings.current();
         s.setLastGroupCode(id);
@@ -356,12 +347,32 @@ public class MainStage extends Stage implements P2PListener {
 
     @Override
     public void onPeerJoined(String peerName) {
-        Platform.runLater(() -> addPeer(peerName));
+        System.out.println("[DropGoLine][UI] onPeerJoined peer=" + peerName
+                + ", fxThread=" + Platform.isFxApplicationThread()
+                + ", thread=" + Thread.currentThread().getName()
+                + ", cards=" + cards.keySet());
+        Platform.runLater(() -> {
+            System.out.println("[DropGoLine][UI] onPeerJoined runLater peer=" + peerName
+                    + ", fxThread=" + Platform.isFxApplicationThread()
+                    + ", thread=" + Thread.currentThread().getName()
+                    + ", cardsBefore=" + cards.keySet());
+            addPeer(peerName);
+        });
     }
 
     @Override
     public void onPeerLeft(String peerName) {
-        Platform.runLater(() -> removePeer(peerName));
+        System.out.println("[DropGoLine][UI] onPeerLeft peer=" + peerName
+                + ", fxThread=" + Platform.isFxApplicationThread()
+                + ", thread=" + Thread.currentThread().getName()
+                + ", cards=" + cards.keySet());
+        Platform.runLater(() -> {
+            System.out.println("[DropGoLine][UI] onPeerLeft runLater peer=" + peerName
+                    + ", fxThread=" + Platform.isFxApplicationThread()
+                    + ", thread=" + Thread.currentThread().getName()
+                    + ", cardsBefore=" + cards.keySet());
+            removePeer(peerName);
+        });
     }
 
     @Override
@@ -405,16 +416,7 @@ public class MainStage extends Stage implements P2PListener {
     @Override
     public void onTransferComplete(String peerName, File file) {
         Platform.runLater(() -> {
-            Timeline sim = progressSims.remove(peerName);
-            if (sim != null) {
-                sim.stop();
-            }
-
-            ProgressStage ps = activeProgress.remove(peerName);
-            if (ps != null) {
-                ps.updateProgress(1);
-                ps.close();
-            }
+            activeDownloads.remove(peerName);
 
             ModernCard card = cards.get(peerName);
             if (card != null) {
@@ -448,13 +450,25 @@ public class MainStage extends Stage implements P2PListener {
     }
 
     private void addPeer(String name) {
+        System.out.println("[DropGoLine][UI] addPeer requested name=" + name
+                + ", exists=" + cards.containsKey(name)
+                + ", cardCountBefore=" + cardPane.getChildren().size()
+                + ", cardsBefore=" + cards.keySet()
+                + ", paneVisible=" + cardPane.isVisible()
+                + ", paneManaged=" + cardPane.isManaged()
+                + ", paneWidth=" + cardPane.getWidth()
+                + ", paneHeight=" + cardPane.getHeight());
         if (cards.containsKey(name)) {
+            System.out.println("[DropGoLine][UI] addPeer skipped duplicate name=" + name);
             return;
         }
 
         ModernCard card = new ModernCard(name, PeerIds.displayName(name));
+        System.out.println("[DropGoLine][UI] addPeer created card name=" + name
+                + ", displayName=" + PeerIds.displayName(name)
+                + ", cardVisible=" + card.isVisible()
+                + ", cardManaged=" + card.isManaged());
         card.setText("Ready");
-        card.setClearAfterDrag(true);
         card.setOnHistoryRequest(() -> openHistoryFor(name));
         card.setOnDownloadRequest(() -> startDownload(name));
         card.setOnTextDropped(text -> {
@@ -474,28 +488,35 @@ public class MainStage extends Stage implements P2PListener {
             System.out.println("[DropGoLine][UI] Calling p2p.sendFile peer=" + name
                     + ", file=" + file.getAbsolutePath() + ", size=" + file.length());
             p2p.sendFile(name, file);
+            card.setDownloaded(false);
+            card.setProgress(0);
             HistoryManager.getInstance().addHistory(name, file.getAbsolutePath(), false,
                     isImageFile(file) ? "IMAGE" : "FILE");
         });
 
         cards.put(name, card);
         cardPane.getChildren().add(card);
+        System.out.println("[DropGoLine][UI] addPeer done name=" + name
+                + ", cardCountAfter=" + cardPane.getChildren().size()
+                + ", cardsAfter=" + cards.keySet()
+                + ", children=" + cardPane.getChildren());
     }
 
     private void removePeer(String name) {
+        System.out.println("[DropGoLine][UI] removePeer requested name=" + name
+                + ", exists=" + cards.containsKey(name)
+                + ", cardCountBefore=" + cardPane.getChildren().size()
+                + ", cardsBefore=" + cards.keySet());
         ModernCard card = cards.remove(name);
         if (card != null) {
             cardPane.getChildren().remove(card);
+        } else {
+            System.out.println("[DropGoLine][UI] removePeer no card found name=" + name);
         }
 
-        Timeline sim = progressSims.remove(name);
-        if (sim != null) {
-            sim.stop();
-        }
-
-        ProgressStage ps = activeProgress.remove(name);
-        if (ps != null) {
-            ps.close();
-        }
+        activeDownloads.remove(name);
+        System.out.println("[DropGoLine][UI] removePeer done name=" + name
+                + ", cardCountAfter=" + cardPane.getChildren().size()
+                + ", cardsAfter=" + cards.keySet());
     }
 }
