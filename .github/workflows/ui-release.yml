@@ -12,6 +12,11 @@ on:
 permissions:
   contents: write
 
+env:
+  APP_NAME: DropGoLine
+  APP_VERSION: 0.1.0
+  UI_JAR: dropgoline-ui-0.1.0-SNAPSHOT.jar
+
 jobs:
   build-ui:
     name: Build UI (${{ matrix.os }})
@@ -22,13 +27,13 @@ jobs:
         include:
           - os: windows
             runner: windows-latest
-            archive: DropGoLine-ui-windows-no-runtime.zip
+            archive: DropGoLine-windows-runtime.zip
           - os: macos
             runner: macos-latest
-            archive: DropGoLine-ui-macos-no-runtime.zip
+            archive: DropGoLine-macos-runtime.zip
           - os: linux
             runner: ubuntu-latest
-            archive: DropGoLine-ui-linux-no-runtime.tar.gz
+            archive: DropGoLine-linux-runtime.tar.gz
 
     steps:
       - name: Checkout
@@ -40,6 +45,10 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: maven
+
+      - name: Verify jpackage
+        shell: bash
+        run: jpackage --version
 
       - name: Install p2p module dependency
         shell: bash
@@ -58,103 +67,79 @@ jobs:
             -DincludeScope=runtime \
             -DoutputDirectory="${GITHUB_WORKSPACE}/ui/target/release-work/deps"
 
-      - name: Package Windows UI
+      - name: Stage jpackage input
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf ui/target/jpackage-input ui/target/jpackage-out
+          mkdir -p ui/target/jpackage-input
+          cp "ui/target/${UI_JAR}" ui/target/jpackage-input/
+          cp ui/target/release-work/deps/*.jar ui/target/jpackage-input/
+
+      - name: Package Windows UI with bundled runtime
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $app = "DropGoLine"
-          $dist = "ui/target/release-ui/$app"
-          Remove-Item -Recurse -Force "ui/target/release-ui" -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path "$dist/lib" | Out-Null
-          Copy-Item "ui/target/dropgoline-ui-0.1.0-SNAPSHOT.jar" "$dist/lib/dropgoline-ui.jar" -Force
-          Copy-Item "ui/target/release-work/deps/*.jar" "$dist/lib" -Force
+          jpackage `
+            --type app-image `
+            --name $env:APP_NAME `
+            --app-version $env:APP_VERSION `
+            --input "ui/target/jpackage-input" `
+            --main-jar $env:UI_JAR `
+            --main-class dropgoline.Launcher `
+            --dest "ui/target/jpackage-out" `
+            --win-console
+
+          $appImage = "ui/target/jpackage-out/$env:APP_NAME"
+          $debugCmdPath = "$appImage/DropGoLine-debug.cmd"
           @'
           @echo off
-          setlocal
-          set APP_DIR=%~dp0
-          java -cp "%APP_DIR%lib\*" dropgoline.App %*
-          '@ | Set-Content -Encoding ASCII "$dist/DropGoLine.bat"
-          @'
-          # DropGoLine UI - Windows
+          cd /d "%~dp0"
+          echo Starting DropGoLine debug launcher...
+          echo.
+          DropGoLine.exe
+          set EXITCODE=%ERRORLEVEL%
+          echo.
+          echo DropGoLine exited with code %EXITCODE%
+          pause
+          exit /b %EXITCODE%
+          '@ | Set-Content -Encoding ASCII $debugCmdPath
 
-          Requires Java 17 or newer on PATH.
+          tar -a -cf "ui/target/${{ matrix.archive }}" -C "ui/target/jpackage-out" $env:APP_NAME
 
-          Run:
-
-          ```powershell
-          .\DropGoLine.bat
-          ```
-
-          This package does not include a Java runtime.
-          '@ | Set-Content -Encoding UTF8 "$dist/README.md"
-          tar -a -cf "ui/target/${{ matrix.archive }}" -C "ui/target/release-ui" "$app"
-
-      - name: Package macOS UI
+      - name: Package macOS UI with bundled runtime
         if: matrix.os == 'macos'
         shell: bash
         run: |
           set -euo pipefail
-          app="DropGoLine"
-          dist="ui/target/release-ui/$app"
-          rm -rf ui/target/release-ui
-          mkdir -p "$dist/lib"
-          cp ui/target/dropgoline-ui-0.1.0-SNAPSHOT.jar "$dist/lib/dropgoline-ui.jar"
-          cp ui/target/release-work/deps/*.jar "$dist/lib/"
-          cat > "$dist/DropGoLine" <<'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          exec java -XstartOnFirstThread -cp "$APP_DIR/lib/*" dropgoline.App "$@"
-          EOF
-          chmod +x "$dist/DropGoLine"
-          cat > "$dist/README.md" <<'EOF'
-          # DropGoLine UI - macOS
+          jpackage \
+            --type app-image \
+            --name "$APP_NAME" \
+            --app-version "$APP_VERSION" \
+            --input "ui/target/jpackage-input" \
+            --main-jar "$UI_JAR" \
+            --main-class dropgoline.Launcher \
+            --dest "ui/target/jpackage-out" \
+            --java-options "-XstartOnFirstThread"
 
-          Requires Java 17 or newer on PATH.
+          (cd ui/target/jpackage-out && zip -r "../${{ matrix.archive }}" "${APP_NAME}.app")
 
-          Run:
-
-          ```bash
-          ./DropGoLine
-          ```
-
-          This package does not include a Java runtime.
-          EOF
-          (cd ui/target/release-ui && zip -r "../${{ matrix.archive }}" "$app")
-
-      - name: Package Linux UI
+      - name: Package Linux UI with bundled runtime
         if: matrix.os == 'linux'
         shell: bash
         run: |
           set -euo pipefail
-          app="DropGoLine"
-          dist="ui/target/release-ui/$app"
-          rm -rf ui/target/release-ui
-          mkdir -p "$dist/lib"
-          cp ui/target/dropgoline-ui-0.1.0-SNAPSHOT.jar "$dist/lib/dropgoline-ui.jar"
-          cp ui/target/release-work/deps/*.jar "$dist/lib/"
-          cat > "$dist/DropGoLine" <<'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          exec java -cp "$APP_DIR/lib/*" dropgoline.App "$@"
-          EOF
-          chmod +x "$dist/DropGoLine"
-          cat > "$dist/README.md" <<'EOF'
-          # DropGoLine UI - Linux
+          jpackage \
+            --type app-image \
+            --name "$APP_NAME" \
+            --app-version "$APP_VERSION" \
+            --input "ui/target/jpackage-input" \
+            --main-jar "$UI_JAR" \
+            --main-class dropgoline.Launcher \
+            --dest "ui/target/jpackage-out"
 
-          Requires Java 17 or newer on PATH.
-
-          Run:
-
-          ```bash
-          ./DropGoLine
-          ```
-
-          This package does not include a Java runtime.
-          EOF
-          tar -czf "ui/target/${{ matrix.archive }}" -C ui/target/release-ui "$app"
+          tar -czf "ui/target/${{ matrix.archive }}" -C ui/target/jpackage-out "$APP_NAME"
 
       - name: Upload UI artifact
         uses: actions/upload-artifact@v4
@@ -186,9 +171,9 @@ jobs:
           tag="ui-${short_sha}-${GITHUB_RUN_NUMBER}"
 
           gh release create "$tag" \
-            release-assets/dropgoline-ui-windows/DropGoLine-ui-windows-no-runtime.zip \
-            release-assets/dropgoline-ui-macos/DropGoLine-ui-macos-no-runtime.zip \
-            release-assets/dropgoline-ui-linux/DropGoLine-ui-linux-no-runtime.tar.gz \
+            release-assets/dropgoline-ui-windows/DropGoLine-windows-runtime.zip \
+            release-assets/dropgoline-ui-macos/DropGoLine-macos-runtime.zip \
+            release-assets/dropgoline-ui-linux/DropGoLine-linux-runtime.tar.gz \
             --target "$GITHUB_SHA" \
             --title "DropGoLine UI ${short_sha}" \
-            --notes "DropGoLine UI builds from ${GITHUB_SHA}. Assets do not include a Java runtime; Java 17+ is required."
+            --notes "DropGoLine UI builds from ${GITHUB_SHA}. Windows, macOS, and Linux assets include a bundled Java runtime."
