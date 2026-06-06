@@ -2,17 +2,24 @@ package p2p.peer;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -22,13 +29,15 @@ public class PeerSignalClient implements AutoCloseable {
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     private final BlockingQueue<SignalMessage> incoming = new LinkedBlockingQueue<>();
+    private final Deque<SignalMessage> deferred = new ArrayDeque<>();
     private final Object sendLock = new Object();
+    private final Object receiveLock = new Object();
     private final String peerId;
     private final WebSocket webSocket;
 
     public PeerSignalClient(String signalingUrl, String peerId) throws IOException {
         this.peerId = peerId;
-        URI uri = URI.create(signalingUrl + (signalingUrl.contains("?") ? "&" : "?") + "peerId=" + peerId);
+        URI uri = signalingUri(signalingUrl, peerId);
         try {
             this.webSocket = HttpClient.newHttpClient()
                     .newWebSocketBuilder()
@@ -39,6 +48,11 @@ public class PeerSignalClient implements AutoCloseable {
         } catch (IllegalArgumentException e) {
             throw new IOException("invalid signaling URL: " + uri, e);
         }
+    }
+
+    static URI signalingUri(String signalingUrl, String peerId) {
+        String encodedPeerId = URLEncoder.encode(peerId, StandardCharsets.UTF_8);
+        return URI.create(signalingUrl + (signalingUrl.contains("?") ? "&" : "?") + "peerId=" + encodedPeerId);
     }
 
     public void send(String type, String to, Object payload) throws Exception {
@@ -57,37 +71,91 @@ public class PeerSignalClient implements AutoCloseable {
     }
 
     public <T> T waitForPayload(String type, Class<T> payloadType, Duration timeout) throws Exception {
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            long remainingMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
-            SignalMessage message = incoming.poll(remainingMillis, TimeUnit.MILLISECONDS);
-            if (message != null && Objects.equals("error", message.type())) {
-                throw new IllegalStateException("signaling error: " + errorText(message));
-            }
-            if (message != null && Objects.equals(type, message.type())) {
-                return objectMapper.treeToValue(message.payload(), payloadType);
-            }
-        }
-        throw new IllegalStateException("timed out waiting for signal type " + type);
+        return objectMapper.treeToValue(waitFor(type, timeout).payload(), payloadType);
     }
 
     public SignalMessage waitFor(String type, Duration timeout) throws Exception {
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            long remainingMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
-            SignalMessage message = incoming.poll(remainingMillis, TimeUnit.MILLISECONDS);
-            if (message != null && Objects.equals("error", message.type())) {
-                throw new IllegalStateException("signaling error: " + errorText(message));
-            }
-            if (message != null && Objects.equals(type, message.type())) {
-                return message;
+        System.out.println("[DropGoLine][Signal] waitFor type=" + type + ", deferredSize=" + deferred.size()
+                + ", incomingSize=" + incoming.size() + ", thread=" + Thread.currentThread().getName());
+        synchronized (receiveLock) {
+            long deadline = System.nanoTime() + timeout.toNanos();
+            while (System.nanoTime() < deadline) {
+                SignalMessage deferredMatch = pollDeferred(message ->
+                        Objects.equals("error", message.type()) || Objects.equals(type, message.type()));
+                if (deferredMatch != null) {
+                    System.out.println("[DropGoLine][Signal] waitFor found in deferred type=" + deferredMatch.type());
+                    if (Objects.equals("error", deferredMatch.type())) {
+                        throw new IllegalStateException("signaling error: " + errorText(deferredMatch));
+                    }
+                    return deferredMatch;
+                }
+
+                long remainingMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
+                SignalMessage message = incoming.poll(remainingMillis, TimeUnit.MILLISECONDS);
+                if (message == null) {
+                    continue;
+                }
+                System.out.println("[DropGoLine][Signal] waitFor polled type=" + message.type()
+                        + ", from=" + message.from() + ", want=" + type);
+                if (Objects.equals("error", message.type())) {
+                    throw new IllegalStateException("signaling error: " + errorText(message));
+                }
+                if (Objects.equals(type, message.type())) {
+                    return message;
+                }
+                System.out.println("[DropGoLine][Signal] waitFor deferring unwanted type=" + message.type());
+                deferred.addLast(message);
             }
         }
         throw new IllegalStateException("timed out waiting for signal type " + type);
     }
 
     public SignalMessage nextSignal(Duration timeout) throws InterruptedException {
-        return incoming.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        return nextSignal(timeout, Set.of());
+    }
+
+    public SignalMessage nextSignal(Duration timeout, Set<String> excludedTypes) throws InterruptedException {
+        synchronized (receiveLock) {
+            SignalMessage deferredMatch = pollDeferred(message -> !excludedTypes.contains(message.type()));
+            if (deferredMatch != null) {
+                return deferredMatch;
+            }
+
+            long deadline = System.nanoTime() + timeout.toNanos();
+            while (System.nanoTime() < deadline) {
+                long remainingMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
+                SignalMessage message = incoming.poll(remainingMillis, TimeUnit.MILLISECONDS);
+                if (message == null) {
+                    return null;
+                }
+                if (!excludedTypes.contains(message.type())) {
+                    return message;
+                }
+                System.out.println("[DropGoLine][Signal] nextSignal deferring excluded type=" + message.type()
+                        + ", thread=" + Thread.currentThread().getName());
+                deferred.addLast(message);
+            }
+            return null;
+        }
+    }
+
+    public void defer(SignalMessage message) {
+        if (message == null) {
+            return;
+        }
+        synchronized (receiveLock) {
+            deferred.addFirst(message);
+        }
+    }
+
+    private SignalMessage pollDeferred(Predicate<SignalMessage> predicate) {
+        for (SignalMessage message : deferred) {
+            if (predicate.test(message)) {
+                deferred.remove(message);
+                return message;
+            }
+        }
+        return null;
     }
 
     private String errorText(SignalMessage message) {
@@ -115,7 +183,7 @@ public class PeerSignalClient implements AutoCloseable {
         synchronized (sendLock) {
             try {
                 webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-            } catch (Exception ignored) {
+            } catch (CompletionException ignored) {
             }
         }
     }
@@ -134,7 +202,7 @@ public class PeerSignalClient implements AutoCloseable {
                     if (!"registered".equals(message.type())) {
                         incoming.add(message);
                     }
-                } catch (Exception e) {
+                } catch (JsonProcessingException e) {
                     incoming.add(new SignalMessage("error", "signal", peerId, objectMapper.valueToTree(e.getMessage())));
                 }
             }

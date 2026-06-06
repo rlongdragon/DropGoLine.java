@@ -1,0 +1,194 @@
+name: Release UI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "ui/**"
+      - ".github/workflows/ui-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ui:
+    name: Build UI (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows
+            runner: windows-latest
+            archive: DropGoLine-ui-windows-no-runtime.zip
+          - os: macos
+            runner: macos-latest
+            archive: DropGoLine-ui-macos-no-runtime.zip
+          - os: linux
+            runner: ubuntu-latest
+            archive: DropGoLine-ui-linux-no-runtime.tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Install p2p module dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -B -f p2p-sample/pom.xml -DskipTests "-Dmaven.repo.local=${RUNNER_TEMP}/m2" install
+
+      - name: Build UI classpath
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -B -f ui/pom.xml \
+            -DskipTests \
+            "-Dmaven.repo.local=${RUNNER_TEMP}/m2" \
+            package dependency:copy-dependencies \
+            -DincludeScope=runtime \
+            -DoutputDirectory="${GITHUB_WORKSPACE}/ui/target/release-work/deps"
+
+      - name: Package Windows UI
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = "DropGoLine"
+          $dist = "ui/target/release-ui/$app"
+          Remove-Item -Recurse -Force "ui/target/release-ui" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "$dist/lib" | Out-Null
+          Copy-Item "ui/target/dropgoline-ui-0.1.0-SNAPSHOT.jar" "$dist/lib/dropgoline-ui.jar" -Force
+          Copy-Item "ui/target/release-work/deps/*.jar" "$dist/lib" -Force
+          @'
+          @echo off
+          setlocal
+          set APP_DIR=%~dp0
+          java -cp "%APP_DIR%lib\*" dropgoline.App %*
+          '@ | Set-Content -Encoding ASCII "$dist/DropGoLine.bat"
+          @'
+          # DropGoLine UI - Windows
+
+          Requires Java 17 or newer on PATH.
+
+          Run:
+
+          ```powershell
+          .\DropGoLine.bat
+          ```
+
+          This package does not include a Java runtime.
+          '@ | Set-Content -Encoding UTF8 "$dist/README.md"
+          tar -a -cf "ui/target/${{ matrix.archive }}" -C "ui/target/release-ui" "$app"
+
+      - name: Package macOS UI
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="DropGoLine"
+          dist="ui/target/release-ui/$app"
+          rm -rf ui/target/release-ui
+          mkdir -p "$dist/lib"
+          cp ui/target/dropgoline-ui-0.1.0-SNAPSHOT.jar "$dist/lib/dropgoline-ui.jar"
+          cp ui/target/release-work/deps/*.jar "$dist/lib/"
+          cat > "$dist/DropGoLine" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          exec java -XstartOnFirstThread -cp "$APP_DIR/lib/*" dropgoline.App "$@"
+          EOF
+          chmod +x "$dist/DropGoLine"
+          cat > "$dist/README.md" <<'EOF'
+          # DropGoLine UI - macOS
+
+          Requires Java 17 or newer on PATH.
+
+          Run:
+
+          ```bash
+          ./DropGoLine
+          ```
+
+          This package does not include a Java runtime.
+          EOF
+          (cd ui/target/release-ui && zip -r "../${{ matrix.archive }}" "$app")
+
+      - name: Package Linux UI
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="DropGoLine"
+          dist="ui/target/release-ui/$app"
+          rm -rf ui/target/release-ui
+          mkdir -p "$dist/lib"
+          cp ui/target/dropgoline-ui-0.1.0-SNAPSHOT.jar "$dist/lib/dropgoline-ui.jar"
+          cp ui/target/release-work/deps/*.jar "$dist/lib/"
+          cat > "$dist/DropGoLine" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          exec java -cp "$APP_DIR/lib/*" dropgoline.App "$@"
+          EOF
+          chmod +x "$dist/DropGoLine"
+          cat > "$dist/README.md" <<'EOF'
+          # DropGoLine UI - Linux
+
+          Requires Java 17 or newer on PATH.
+
+          Run:
+
+          ```bash
+          ./DropGoLine
+          ```
+
+          This package does not include a Java runtime.
+          EOF
+          tar -czf "ui/target/${{ matrix.archive }}" -C ui/target/release-ui "$app"
+
+      - name: Upload UI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropgoline-ui-${{ matrix.os }}
+          path: ui/target/${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Publish UI release
+    runs-on: ubuntu-latest
+    needs: build-ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download UI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+          tag="ui-${short_sha}-${GITHUB_RUN_NUMBER}"
+
+          gh release create "$tag" \
+            release-assets/dropgoline-ui-windows/DropGoLine-ui-windows-no-runtime.zip \
+            release-assets/dropgoline-ui-macos/DropGoLine-ui-macos-no-runtime.zip \
+            release-assets/dropgoline-ui-linux/DropGoLine-ui-linux-no-runtime.tar.gz \
+            --target "$GITHUB_SHA" \
+            --title "DropGoLine UI ${short_sha}" \
+            --notes "DropGoLine UI builds from ${GITHUB_SHA}. Assets do not include a Java runtime; Java 17+ is required."

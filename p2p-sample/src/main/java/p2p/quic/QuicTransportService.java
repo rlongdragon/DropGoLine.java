@@ -51,6 +51,7 @@ public class QuicTransportService {
         }
     }
 
+    @SuppressWarnings("deprecation")
     public ServerConnector accept(DatagramSocket iceSocket, InputStream certificate, InputStream privateKey,
                                   IncomingStreamHandler handler) throws Exception {
         ServerConnectionConfig config = ServerConnectionConfig.builder()
@@ -107,7 +108,7 @@ public class QuicTransportService {
         private void handleStream(QuicStream quicStream) {
             try {
                 handler.handle(quicStream.getInputStream(), quicStream.getOutputStream());
-            } catch (IOException e) {
+            } catch (Exception e) {
                 quicStream.resetStream(1);
             }
         }
@@ -124,6 +125,8 @@ public class QuicTransportService {
             connection.closeAndWait();
         }
     }
+
+
 
     private record KwikTransferStream(QuicStream stream) implements QuicChannel.TransferStream {
         @Override

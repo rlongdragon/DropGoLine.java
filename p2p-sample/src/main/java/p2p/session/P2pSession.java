@@ -16,6 +16,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -35,6 +37,7 @@ public class P2pSession implements AutoCloseable {
     private final AtomicBoolean closedOnce = new AtomicBoolean();
     private final Runnable onClose;
     private final Listener listener;
+    private final ExecutorService transferExecutor = Executors.newSingleThreadExecutor();
     private final Map<String, LocalOffer> localOffers = new ConcurrentHashMap<>();
     private final Map<String, RemoteOffer> remoteOffers = new ConcurrentHashMap<>();
     private volatile boolean running = true;
@@ -98,6 +101,8 @@ public class P2pSession implements AutoCloseable {
     }
 
     public void offerFile(Path path) throws IOException {
+        System.out.println("[DropGoLine][DirectSession] offerFile requested local=" + localPeerId
+                + ", remote=" + remotePeerId + ", path=" + path);
         if (!Files.isRegularFile(path)) {
             throw new IOException("file does not exist: " + path);
         }
@@ -106,6 +111,9 @@ public class P2pSession implements AutoCloseable {
         long size = Files.size(path);
         String checksum = FileChecksums.sha256(path);
         localOffers.put(id, new LocalOffer(path, path.getFileName().toString(), size, checksum));
+        System.out.println("[DropGoLine][DirectSession] sending file offer id=" + id
+                + ", remote=" + remotePeerId + ", file=" + path.getFileName()
+                + ", size=" + size);
         synchronized (output) {
             output.writeInt(SessionProtocol.TYPE_FILE_OFFER);
             output.writeUTF(id);
@@ -120,6 +128,8 @@ public class P2pSession implements AutoCloseable {
     public void requestFile(String id) throws IOException {
         RemoteOffer offer = remoteOffers.get(id);
         long offset = resumeOffset(offer);
+        System.out.println("[DropGoLine][DirectSession] requestFile id=" + id
+                + ", local=" + localPeerId + ", remote=" + remotePeerId);
         synchronized (output) {
             output.writeInt(SessionProtocol.TYPE_FILE_REQUEST);
             output.writeUTF(id);
@@ -147,6 +157,7 @@ public class P2pSession implements AutoCloseable {
         running = false;
         closeQuietly(input);
         closeQuietly(output);
+        transferExecutor.shutdownNow();
         closed.countDown();
         onClose.run();
     }
@@ -158,7 +169,7 @@ public class P2pSession implements AutoCloseable {
                 switch (type) {
                     case SessionProtocol.TYPE_TEXT -> listener.onText(remotePeerId, input.readUTF());
                     case SessionProtocol.TYPE_FILE_OFFER -> receiveFileOffer();
-                    case SessionProtocol.TYPE_FILE_REQUEST -> sendRequestedFile(input.readUTF(), input.readLong());
+                    case SessionProtocol.TYPE_FILE_REQUEST -> submitRequestedFile(input.readUTF(), input.readLong());
                     case SessionProtocol.TYPE_FILE_START -> receiveFile();
                     case SessionProtocol.TYPE_NOTICE -> listener.onNotice(remotePeerId, input.readUTF());
                     case SessionProtocol.TYPE_KEEPALIVE -> {
@@ -209,20 +220,39 @@ public class P2pSession implements AutoCloseable {
         String fileName = sanitizeFileName(input.readUTF());
         long size = input.readLong();
         String checksum = input.readUTF();
+        System.out.println("[DropGoLine][DirectSession] received file offer id=" + id
+                + ", from=" + remotePeerId + ", file=" + fileName + ", size=" + size);
         remoteOffers.put(id, new RemoteOffer(fileName, size, checksum));
         listener.onFileOffer(remotePeerId, id, fileName, size);
     }
 
     private void sendRequestedFile(String id, long offset) throws IOException {
+        System.out.println("[DropGoLine][DirectSession] received file request id=" + id
+                + ", from=" + remotePeerId + ", offset=" + offset);
         // Security boundary: the peer may request only an opaque offer id.
         // It never supplies a path, and we only serve files explicitly shared
         // earlier by this local process through /file.
         LocalOffer offer = localOffers.get(id);
         if (offer == null) {
+            System.out.println("[DropGoLine][DirectSession] file request missing local offer id=" + id);
             sendNotice("file offer not found: " + id);
             return;
         }
         sendFile(id, offer, offset);
+    }
+
+    private void submitRequestedFile(String id, long offset) {
+        transferExecutor.submit(() -> {
+            try {
+                sendRequestedFile(id, offset);
+            } catch (Exception e) {
+                if (running) {
+                    listener.onError(remotePeerId, e instanceof IOException ioException
+                            ? ioException
+                            : new IOException("direct file send failed: " + e.getMessage(), e));
+                }
+            }
+        });
     }
 
     private void sendFile(String id, LocalOffer offer, long offset) throws IOException {
@@ -235,6 +265,9 @@ public class P2pSession implements AutoCloseable {
             sendNotice("invalid resume offset for " + id + ": " + offset);
             return;
         }
+        System.out.println("[DropGoLine][DirectSession] sendFile start id=" + id
+                + ", remote=" + remotePeerId + ", file=" + offer.path()
+                + ", size=" + offer.size() + ", offset=" + offset);
         synchronized (output) {
             output.writeInt(SessionProtocol.TYPE_FILE_START);
             output.writeUTF(id);
@@ -247,11 +280,20 @@ public class P2pSession implements AutoCloseable {
             try (InputStream fileInput = Files.newInputStream(offer.path())) {
                 skipFully(fileInput, offset);
                 int read;
+                int chunkIndex = 0;
+                long sent = 0;
                 while ((read = fileInput.read(buffer)) >= 0) {
                     output.writeInt(SessionProtocol.TYPE_FILE_CHUNK);
                     output.writeUTF(id);
                     output.writeInt(read);
                     output.write(buffer, 0, read);
+                    sent += read;
+                    output.flush();
+                    listener.onFileProgress(remotePeerId, id, offer.fileName(), offer.size(), offset + sent);
+                    System.out.println("[DropGoLine][DirectSession] sendFile chunk id=" + id
+                            + ", chunk=" + chunkIndex + ", bytes=" + read
+                            + ", sent=" + (offset + sent) + "/" + offer.size());
+                    chunkIndex++;
                 }
             }
 
@@ -259,6 +301,8 @@ public class P2pSession implements AutoCloseable {
             output.writeUTF(id);
             output.flush();
         }
+        System.out.println("[DropGoLine][DirectSession] sendFile complete id=" + id
+                + ", remote=" + remotePeerId + ", file=" + offer.path());
         listener.onNotice(localPeerId, "sent " + offer.path() + " for " + id
                 + (offset > 0 ? " from byte " + offset : ""));
     }
@@ -285,6 +329,11 @@ public class P2pSession implements AutoCloseable {
         try (OutputStream fileOutput = offset > 0
                 ? Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
                 : Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+        System.out.println("[DropGoLine][DirectSession] receiveFile start id=" + id
+                + ", from=" + remotePeerId + ", target=" + target
+                + ", size=" + size + ", offset=" + offset);
+
+            int chunkIndex = 0;
             while (true) {
                 int type = input.readInt();
                 if (type == SessionProtocol.TYPE_FILE_END) {
@@ -309,6 +358,11 @@ public class P2pSession implements AutoCloseable {
                 input.readFully(chunk);
                 fileOutput.write(chunk);
                 received += length;
+                listener.onFileProgress(remotePeerId, id, fileName, size, received);
+                System.out.println("[DropGoLine][DirectSession] receiveFile chunk id=" + id
+                        + ", chunk=" + chunkIndex + ", bytes=" + length
+                        + ", received=" + received + "/" + size);
+                chunkIndex++;
             }
         }
 
@@ -322,6 +376,9 @@ public class P2pSession implements AutoCloseable {
         }
         moveCompletedFile(partial, target);
         remoteOffers.remove(id);
+        System.out.println("[DropGoLine][DirectSession] receiveFile complete id=" + id
+                + ", from=" + remotePeerId + ", target=" + target
+                + ", received=" + received);
         listener.onFileSaved(remotePeerId, id, target);
     }
 
@@ -417,6 +474,9 @@ public class P2pSession implements AutoCloseable {
         }
 
         default void onFileSaved(String fromPeerId, String id, Path target) {
+        }
+
+        default void onFileProgress(String fromPeerId, String id, String fileName, long size, long bytesReceived) {
         }
 
         default void onNotice(String fromPeerId, String message) {

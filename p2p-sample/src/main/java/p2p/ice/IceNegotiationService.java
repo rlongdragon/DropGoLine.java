@@ -83,6 +83,7 @@ public class IceNegotiationService {
         }
     }
 
+    @SuppressWarnings("deprecation")
     public IceConnection establish(IceSession session, Duration timeout) throws Exception {
         CompletableFuture<IceProcessingState> finished = new CompletableFuture<>();
         session.agent().addStateChangeListener((PropertyChangeEvent event) -> {

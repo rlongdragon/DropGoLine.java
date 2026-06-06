@@ -1,0 +1,221 @@
+.root {
+    -fx-background-color: #232323;
+}
+
+.app-root {
+    -fx-background-radius: 12;
+}
+
+/* ---- 視窗按鈕（縮小 / 關閉）---- */
+.button.window-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #cfcfcf;
+    -fx-font-size: 12px;
+    -fx-min-width: 46px;
+    -fx-pref-height: 30px;
+    -fx-max-height: 30px;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-border-width: 0;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+}
+
+.button.window-button:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.12);
+    -fx-text-fill: white;
+}
+
+.button.window-button:pressed {
+    -fx-background-color: rgba(255, 255, 255, 0.20);
+}
+
+.button.window-button.close:hover {
+    -fx-background-color: #e81123;
+    -fx-text-fill: white;
+}
+
+.button.window-button.close:pressed {
+    -fx-background-color: #c50f1f;
+}
+
+/* ---- 選單列 ---- */
+.menu-bar {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.menu-bar>.container>.menu-button>.label {
+    -fx-text-fill: #e0e0e0;
+}
+
+.menu-bar>.container>.menu-button:hover,
+.menu-bar>.container>.menu-button:showing {
+    -fx-background-color: rgba(255, 255, 255, 0.12);
+    -fx-background-radius: 4;
+}
+
+/* ---- 下拉選單（popup）---- */
+.context-menu {
+    -fx-background-color: #2b2b2b;
+    -fx-background-radius: 6;
+    -fx-padding: 4;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 12, 0, 0, 3);
+}
+
+.menu-item {
+    -fx-background-radius: 4;
+    -fx-padding: 6 18 6 12;
+}
+
+.menu-item .label {
+    -fx-text-fill: #e6e6e6;
+}
+
+.menu-item:focused,
+.menu-item:hovered {
+    -fx-background-color: #3d6fb4;
+}
+
+.menu-item:focused .label,
+.menu-item:hovered .label {
+    -fx-text-fill: white;
+}
+
+/* ---- 一般文字 ---- */
+.label {
+    -fx-text-fill: #e8e8e8;
+}
+
+/* ---- 文字輸入框 ---- */
+.text-field,
+.text-area {
+    -fx-background-color: #3a3a3a;
+    -fx-text-fill: white;
+    -fx-prompt-text-fill: #888888;
+    -fx-background-radius: 4;
+    -fx-padding: 6 10 6 10;
+}
+
+/* ---- 勾選框 ---- */
+.check-box {
+    -fx-text-fill: #e8e8e8;
+}
+
+.check-box>.box {
+    -fx-background-color: #3a3a3a;
+    -fx-border-color: #555;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+}
+
+.check-box:selected>.box {
+    -fx-background-color: #4a90e2;
+    -fx-border-color: #4a90e2;
+}
+
+.check-box:selected>.box>.mark {
+    -fx-background-color: white;
+}
+
+/* ---- 按鈕 ---- */
+.button {
+    -fx-background-color: #3a3a3a;
+    -fx-text-fill: white;
+    -fx-background-radius: 4;
+    -fx-padding: 6 16 6 16;
+    -fx-cursor: hand;
+}
+
+.button:hover {
+    -fx-background-color: #4a4a4a;
+}
+
+.button:pressed {
+    -fx-background-color: #2a2a2a;
+}
+
+/* ---- 捲動區 / 捲軸 ---- */
+.scroll-pane,
+.scroll-pane .viewport {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar .thumb {
+    -fx-background-color: #555;
+    -fx-background-radius: 6;
+}
+
+.scroll-bar .track,
+.scroll-bar .increment-button,
+.scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar .increment-arrow,
+.scroll-bar .decrement-arrow {
+    -fx-padding: 0;
+}
+
+/* 頂部透明拖曳列 */
+.top-bar {
+    -fx-background-color: transparent;
+}
+
+/* 底部狀態列：透明 + 上邊框跟卡片區分隔 */
+.status-bar {
+    -fx-background-color: transparent;
+    -fx-border-color: rgba(255, 255, 255, 0.08);
+    -fx-border-width: 1 0 0 0;
+}
+
+/* 傳送卡片 */
+.send-card {
+    -fx-background-color: rgba(255, 255, 255, 0.04);
+    -fx-background-radius: 10;
+    -fx-border-color: rgba(255, 255, 255, 0.22);
+    -fx-border-width: 1.5;
+    -fx-border-radius: 10;
+    -fx-padding: 18;
+}
+
+.send-card:hover,
+.send-card.drag-over {
+    -fx-border-color: #4a90e2;
+    -fx-background-color: rgba(74, 144, 226, 0.12);
+}
+
+.send-card-label {
+    -fx-text-fill: #cfcfcf;
+    -fx-font-size: 13px;
+}
+
+/* 系統匣自訂選單 */
+.tray-menu {
+    -fx-background-color: #2b2b2b;
+    -fx-background-radius: 8;
+    -fx-padding: 4;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 14, 0, 0, 4);
+}
+
+.tray-menu-item {
+    -fx-text-fill: #e6e6e6;
+    -fx-font-size: 13px;
+    -fx-padding: 7 28 7 14;
+    -fx-background-radius: 5;
+    -fx-cursor: hand;
+}
+
+.tray-menu-item:hover {
+    -fx-background-color: #3d6fb4;
+    /* 跟圖 2 一樣的藍色 highlight */
+    -fx-text-fill: white;
+}
+
+.tray-menu-sep {
+    -fx-background-color: rgba(255, 255, 255, 0.12);
+}

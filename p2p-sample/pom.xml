@@ -71,6 +71,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>p2p.P2pApplication</mainClass>
+                    <classifier>exec</classifier>
                 </configuration>
             </plugin>
             <plugin>
