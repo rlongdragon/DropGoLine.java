@@ -101,7 +101,7 @@ jobs:
           $app = "java-p2p-chat"
           $dist = "target/release-chat/$app"
           New-Item -ItemType Directory -Force -Path "$dist/lib" | Out-Null
-          Copy-Item "target/java-p2p.jar.original" "$dist/lib/java-p2p-client.jar" -Force
+          Copy-Item "target/java-p2p.jar" "$dist/lib/java-p2p-client.jar" -Force
           Copy-Item "target/release-work/deps/*.jar" "$dist/lib" -Force
           Copy-Item $env:JAVA_HOME "$dist/runtime" -Recurse -Force
           @'
@@ -131,7 +131,7 @@ jobs:
           app="java-p2p-chat"
           dist="target/release-chat/$app"
           mkdir -p "$dist/lib"
-          cp target/java-p2p.jar.original "$dist/lib/java-p2p-client.jar"
+          cp target/java-p2p.jar "$dist/lib/java-p2p-client.jar"
           cp target/release-work/deps/*.jar "$dist/lib/"
           cp -a "$JAVA_HOME" "$dist/runtime"
           cat > "$dist/java-p2p-chat" <<'EOF'
