@@ -1,5 +1,6 @@
 package p2p.api;
 
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -51,7 +52,8 @@ public final class P2pSessionInstance implements AutoCloseable {
     private static final Duration ICE_TIMEOUT = Duration.ofSeconds(45);
     private static final Duration DIRECT_ACCEPT_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration DIRECT_RECONNECT_WINDOW = Duration.ofSeconds(30);
-    private static final int RELAY_FILE_CHUNK_SIZE = 3 * 1024;
+    private static final int RELAY_FILE_CHUNK_SIZE = 32 * 1024;
+    private static final Duration RELAY_CHUNK_TIMEOUT = Duration.ofSeconds(15);
 
     private final PeerSignalClient signal;
     private final String peerId;
@@ -68,6 +70,8 @@ public final class P2pSessionInstance implements AutoCloseable {
     private final Map<String, RelayLocalOffer> relayLocalOffers = new ConcurrentHashMap<>();
     private final Map<String, RelayRemoteOffer> relayRemoteOffers = new ConcurrentHashMap<>();
     private final Map<String, RelayIncomingFile> relayIncomingFiles = new ConcurrentHashMap<>();
+    private final Map<String, Long> relayLastChunkNanos = new ConcurrentHashMap<>();
+    private final Map<String, Integer> relayWatchdogVersion = new ConcurrentHashMap<>();
     private final Map<String, Integer> reconnectAttempts = new ConcurrentHashMap<>();
     private final Map<String, Long> reconnectDeadlines = new ConcurrentHashMap<>();
     private final Set<String> knownMembers = ConcurrentHashMap.newKeySet();
@@ -633,10 +637,13 @@ public final class P2pSessionInstance implements AutoCloseable {
         if (previous != null) {
             previous.close();
         }
+        int watchdogVersion = relayWatchdogVersion.merge(id, 1, Integer::sum);
+        relayLastChunkNanos.put(id, System.nanoTime());
         relayIncomingFiles.put(id, new RelayIncomingFile(message.from(), fileName, target, partial, size, checksum,
                 offset, offset > 0
-                ? Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
-                : Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)));
+                ? new BufferedOutputStream(Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.APPEND), 256 * 1024)
+                : new BufferedOutputStream(Files.newOutputStream(partial, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), 256 * 1024)));
+        scheduleRelayWatchdog(id, watchdogVersion);
         System.out.println("[DropGoLine][P2pSessionInstance] relay file receive start from=" + message.from()
                 + ", id=" + id + ", target=" + target + ", size=" + size + ", offset=" + offset);
     }
@@ -654,6 +661,7 @@ public final class P2pSessionInstance implements AutoCloseable {
             throw new IllegalStateException("relay file chunk too large: " + chunk.length);
         }
         incoming.write(chunk);
+        relayLastChunkNanos.put(id, System.nanoTime());
         receivedListener.onReceived(P2pEvent.fileProgress(message.from(), id, incoming.fileName(),
                 incoming.size(), incoming.received(), false));
         System.out.println("[DropGoLine][P2pSessionInstance] relay file chunk received from=" + message.from()
@@ -669,6 +677,8 @@ public final class P2pSessionInstance implements AutoCloseable {
                     + ", id=" + id + ", hasIncoming=" + (incoming != null));
             return;
         }
+        relayLastChunkNanos.remove(id);
+        relayWatchdogVersion.remove(id);
         incoming.close();
         System.out.println("[DropGoLine][P2pSessionInstance] relay file receive end from=" + message.from()
                 + ", id=" + id + ", target=" + incoming.target()
@@ -813,8 +823,7 @@ public final class P2pSessionInstance implements AutoCloseable {
     }
 
     private void sendRelayFile(String remotePeerId, String id, RelayLocalOffer offer, long offset) throws Exception {
-        if (Files.size(offer.path()) != offer.size()
-                || !FileChecksums.sha256(offer.path()).equalsIgnoreCase(offer.checksum())) {
+        if (Files.size(offer.path()) != offer.size()) {
             sendRelayFileNotice(remotePeerId, "file changed after offer; share it again: " + id);
             return;
         }
@@ -852,11 +861,59 @@ public final class P2pSessionInstance implements AutoCloseable {
                         + ", id=" + id + ", chunk=" + chunkIndex
                         + ", bytes=" + read + ", sent=" + (offset + sent) + "/" + offer.size());
                 chunkIndex++;
+                if (chunkIndex % 20 == 0) {
+                    Thread.sleep(5);
+                }
             }
         }
         signal.sendToServer("group-file-end", Map.of("to", remotePeerId, "id", id));
         System.out.println("[DropGoLine][P2pSessionInstance] sendRelayFile complete remote=" + remotePeerId
                 + ", id=" + id + ", path=" + offer.path());
+    }
+
+    private void scheduleRelayWatchdog(String id, int version) {
+        reconnectExecutor.schedule(() -> {
+            if (!Integer.valueOf(version).equals(relayWatchdogVersion.get(id))) {
+                return;
+            }
+            Long lastTime = relayLastChunkNanos.get(id);
+            if (lastTime == null) {
+                return;
+            }
+            if (System.nanoTime() - lastTime < RELAY_CHUNK_TIMEOUT.toNanos()) {
+                scheduleRelayWatchdog(id, version);
+                return;
+            }
+            RelayIncomingFile incoming = relayIncomingFiles.remove(id);
+            if (incoming == null) {
+                relayLastChunkNanos.remove(id);
+                relayWatchdogVersion.remove(id);
+                return;
+            }
+            long offset;
+            try {
+                incoming.close();
+                offset = Files.size(incoming.partial());
+            } catch (IOException e) {
+                relayLastChunkNanos.remove(id);
+                relayWatchdogVersion.remove(id);
+                errorCallback.onError(incoming.sender(), "relay watchdog flush failed: " + userMessage(e));
+                return;
+            }
+            System.out.println("[DropGoLine][P2pSessionInstance] relay stall detected, sending resume id=" + id
+                    + ", offset=" + offset + ", sender=" + incoming.sender());
+            try {
+                signal.sendToServer("group-file-resume", Map.of(
+                        "to", incoming.sender(),
+                        "id", id,
+                        "offset", offset));
+                relayLastChunkNanos.put(id, System.nanoTime());
+            } catch (Exception e) {
+                relayLastChunkNanos.remove(id);
+                relayWatchdogVersion.remove(id);
+                errorCallback.onError(incoming.sender(), "relay resume failed: " + userMessage(e));
+            }
+        }, RELAY_CHUNK_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
     }
 
     private void sendRelayFileNotice(String remotePeerId, String message) throws Exception {
@@ -920,6 +977,8 @@ public final class P2pSessionInstance implements AutoCloseable {
             } catch (Exception ignored) {
             }
         }
+        relayLastChunkNanos.clear();
+        relayWatchdogVersion.clear();
         reconnectExecutor.shutdownNow();
         executor.shutdownNow();
     }
