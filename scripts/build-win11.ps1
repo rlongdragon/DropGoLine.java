@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.0",
+    [string]$Version = "1.0.0",
     [switch]$RunTests,
     [switch]$Installer
 )
@@ -28,6 +28,27 @@ function Test-Command {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "Required command '$Name' was not found in PATH."
     }
+}
+
+function ConvertTo-JPackageAppVersion {
+    param([string]$Value)
+
+    $candidate = ($Value -split "[-+]")[0]
+    if ($candidate -notmatch "^\d+(\.\d+){0,2}$") {
+        return "1.0.0"
+    }
+
+    $parts = [System.Collections.Generic.List[string]]::new()
+    $candidate.Split(".") | ForEach-Object { $parts.Add(([int]$_).ToString()) }
+    while ($parts.Count -lt 3) {
+        $parts.Add("0")
+    }
+
+    if ([int]$parts[0] -lt 1) {
+        $parts[0] = "1"
+    }
+
+    return ($parts | Select-Object -First 3) -join "."
 }
 
 function New-AppImageZip {
@@ -70,6 +91,7 @@ $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 
 $testFlag = if ($RunTests) { "" } else { "-Dmaven.test.skip=true" }
 $mavenRepoArg = "-Dmaven.repo.local=$localM2"
+$jpackageAppVersion = ConvertTo-JPackageAppVersion $Version
 
 Test-Command "mvn"
 Test-Command "jpackage"
@@ -129,7 +151,7 @@ Invoke-Step "Create Windows app image with bundled runtime" {
         & jpackage `
             --type app-image `
             --name DropGoLine `
-            --app-version $Version `
+            --app-version $jpackageAppVersion `
             --input $stageDir `
             --main-jar $jarName `
             --main-class dropgoline.Launcher `
@@ -166,7 +188,7 @@ Invoke-Step "Create Windows app image with bundled runtime" {
             & jpackage `
                 --type exe `
                 --name DropGoLine `
-                --app-version $Version `
+                --app-version $jpackageAppVersion `
                 --app-image $appImageDir `
                 --dest $installerDir `
                 --win-menu `
