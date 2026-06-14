@@ -8,10 +8,10 @@ DropGoLine.java 是一個 Java P2P 傳輸專案，包含：
 目前 demo signaling server：
 
 ```text
-12.146.248.110
+23.146.248.110
 ```
 
-桌面端會自動組成 `ws://<server-ip>:18080/signal`，所以 UI 設定裡只需要填 `12.146.248.110`。
+桌面端會自動組成 `ws://<server-ip>:18080/signal`，所以 UI 設定裡只需要填 `23.146.248.110`。
 
 ## 使用者快速啟動
 
